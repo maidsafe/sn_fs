@@ -8,7 +8,7 @@ mod tree_replica;
 mod fs_tree_types;
 
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use libc::{ENOENT, ENOTEMPTY, EINVAL};
 use time::Timespec;
 use fuse::{FileType, FileAttr, Filesystem, Request, ReplyData, ReplyOpen, ReplyWrite, ReplyCreate, ReplyEntry, ReplyAttr, ReplyEmpty, ReplyDirectory};
@@ -19,12 +19,13 @@ use std::os::unix::ffi::OsStrExt;   // unix specific.
 
 use tree_replica::TreeReplica;
 use fs_tree_types::{FsTreeNode, FsOpMove};
-use metadata::{fs_metadata, fs_inode_meta, fs_ref_meta, fs_inode_file_meta, dirent_kind};
+use metadata::{FsMetadata, FsInodeMeta, FsRefMeta, FsInodeFileMeta, DirentKind};
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 };                     // 1 second
 
 const CREATE_TIME: Timespec = Timespec { sec: 1381237736, nsec: 0 };    // 2013-10-08 08:56
 
+/*
 const HELLO_DIR_ATTR: FileAttr = FileAttr {
     ino: 1,
     size: 0,
@@ -41,6 +42,7 @@ const HELLO_DIR_ATTR: FileAttr = FileAttr {
     rdev: 0,
     flags: 0,
 };
+
 
 const HELLO_TXT_CONTENT: &'static str = "Hello World!\n";
 
@@ -61,18 +63,21 @@ const HELLO_TXT_ATTR: FileAttr = FileAttr {
     flags: 0,
 };
 
+*/
+
+
 struct SafeFS {
     replica: TreeReplica,
 }
 
 
-struct ino_merge;
+struct InoMerge;
 
-impl ino_merge {   
+impl InoMerge {   
     pub fn combine(a: u64, b: u64) -> u64 {
         a<<48 | b
     }
-
+/*
     pub fn get_a(c: u64) -> u64 {
         c >> 48
     }
@@ -80,6 +85,7 @@ impl ino_merge {
     pub fn get_b(c: u64) -> u64 {
         c & 0xFFFFFFFFFFFF
     }
+*/    
 }
 
 impl SafeFS {
@@ -112,7 +118,6 @@ impl SafeFS {
     }
 
     fn child_by_name(&self, parent: u64, name: &OsStr) -> Option<(u64, &FsTreeNode)> {   
-        let matches: Vec::<(u64, FsTreeNode)> = Vec::new();
         let t = self.replica.state().tree();
         for child_id in t.children(&parent) {
             if let Some(node) = t.find(&child_id) {
@@ -124,14 +129,14 @@ impl SafeFS {
         None
     }
 
-    fn new_opmove_new_child(&mut self, parent: u64, metadata: fs_metadata) -> FsOpMove {
+    fn new_opmove_new_child(&mut self, parent: u64, metadata: FsMetadata) -> FsOpMove {
         let ts = self.replica.tick();
-        let child = ino_merge::combine(*ts.actor_id(), ts.counter());
+        let child = InoMerge::combine(*ts.actor_id(), ts.counter());
         // let child = self.new_ino();
         FsOpMove::new(ts, parent, metadata, child )
     }
 
-    fn new_opmove(&mut self, parent: u64, metadata: fs_metadata, child: u64) -> FsOpMove {
+    fn new_opmove(&mut self, parent: u64, metadata: FsMetadata, child: u64) -> FsOpMove {
         FsOpMove::new(self.replica.tick(), parent, metadata, child )
     }
 }
@@ -158,7 +163,7 @@ impl Filesystem for SafeFS {
 
     fn init(&mut self, _req: &Request) -> Result<(), c_int> {
 
-        let meta = fs_metadata::inode_regular(fs_inode_meta::new(OsStr::new("root").to_os_string(), dirent_kind::directory));
+        let meta = FsMetadata::InodeRegular(FsInodeMeta::new(OsStr::new("root").to_os_string(), DirentKind::Directory));
         let op = self.new_opmove(Self::forest(), meta, Self::root());
         self.replica.apply_op(op);
         
@@ -173,9 +178,9 @@ impl Filesystem for SafeFS {
         if let Some((child, node)) = self.child_by_name(parent, name) {
 
             let kind: FileType = match node.metadata().dirent_kind() {
-                dirent_kind::directory => FileType::Directory,
-                dirent_kind::file => FileType::RegularFile,
-                dirent_kind::symlink => FileType::Symlink,
+                DirentKind::Directory => FileType::Directory,
+                DirentKind::File => FileType::RegularFile,
+                DirentKind::Symlink => FileType::Symlink,
             };
 
             let mut ino = child;
@@ -225,9 +230,9 @@ impl Filesystem for SafeFS {
         if let Some(node) = self.replica.state().tree().find(&ino) {
 
             let kind: FileType = match node.metadata().dirent_kind() {
-                dirent_kind::directory => FileType::Directory,
-                dirent_kind::file => FileType::RegularFile,
-                dirent_kind::symlink => FileType::Symlink,
+                DirentKind::Directory => FileType::Directory,
+                DirentKind::File => FileType::RegularFile,
+                DirentKind::Symlink => FileType::Symlink,
             };
 
             let attr = FileAttr {
@@ -253,15 +258,15 @@ impl Filesystem for SafeFS {
         }
     }
 
-    fn setattr(&mut self, _req: &Request, ino: u64, mode: Option<u32>, uid: Option<u32>, gid: Option<u32>, size: Option<u64>, atime: Option<Timespec>, mtime: Option<Timespec>, _fh: Option<u64>, crtime: Option<Timespec>, _chgtime: Option<Timespec>, _bkuptime: Option<Timespec>, flags: Option<u32>, reply: ReplyAttr) {
+    fn setattr(&mut self, _req: &Request, ino: u64, mode: Option<u32>, uid: Option<u32>, gid: Option<u32>, size: Option<u64>, _atime: Option<Timespec>, _mtime: Option<Timespec>, _fh: Option<u64>, _crtime: Option<Timespec>, _chgtime: Option<Timespec>, _bkuptime: Option<Timespec>, flags: Option<u32>, reply: ReplyAttr) {
         println!("setattr -- ino: {}, mode: {:?}, uid: {:?}, gid: {:?}", ino, mode, uid, gid);
 
         if let Some(node) = self.replica.state().tree().find(&ino) {
 
             let kind: FileType = match node.metadata().dirent_kind() {
-                dirent_kind::directory => FileType::Directory,
-                dirent_kind::file => FileType::RegularFile,
-                dirent_kind::symlink => FileType::Symlink,
+                DirentKind::Directory => FileType::Directory,
+                DirentKind::File => FileType::RegularFile,
+                DirentKind::Symlink => FileType::Symlink,
             };
             let mut attr_size = node.metadata().size();
 
@@ -272,8 +277,9 @@ impl Filesystem for SafeFS {
                         println!("setattr -- size={}, new_size={})", meta.size(), new_size);
                         meta.truncate_content(new_size);
                         meta.set_size(new_size);
+                        let parent_id = *node.parent_id();
 
-                        let op = self.new_opmove(*node.parent_id(), meta, ino);
+                        let op = self.new_opmove(parent_id, meta, ino);
                         self.replica.apply_op(op);
                         attr_size = new_size;
                     } else {
@@ -322,7 +328,7 @@ impl Filesystem for SafeFS {
         // find child of parent that matches $name
         if let Some((ino, node)) = self.child_by_name(parent, name) {
 
-            if !matches!(node.metadata().dirent_kind(), dirent_kind::directory) {
+            if !matches!(node.metadata().dirent_kind(), DirentKind::Directory) {
                 reply.error(ENOENT);
                 return;
             }
@@ -334,7 +340,7 @@ impl Filesystem for SafeFS {
             }
 
             // Generate op to move dir node to trash.
-            let op = self.new_opmove(Self::trash(), fs_metadata::Empty, ino);
+            let op = self.new_opmove(Self::trash(), FsMetadata::Empty, ino);
             self.replica.apply_op(op);
 
             reply.ok();
@@ -353,9 +359,9 @@ impl Filesystem for SafeFS {
     ) {
         println!("symlink -- parent: {}, name: {:?}, link: {}", parent, name, link.display());
 
-        if let Some(node) = self.replica.state().tree().find(&parent) {
+        if let Some(_node) = self.replica.state().tree().find(&parent) {
 
-            let mut meta = fs_metadata::inode_regular(fs_inode_meta::new(name.to_os_string(), dirent_kind::symlink));
+            let mut meta = FsMetadata::InodeRegular(FsInodeMeta::new(name.to_os_string(), DirentKind::Symlink));
             meta.set_symlink(link.as_os_str());
             let size = meta.size();
             let op = self.new_opmove_new_child(parent, meta);
@@ -393,7 +399,7 @@ impl Filesystem for SafeFS {
         if let Some(node) = self.replica.state().tree().find(&ino) {
 
             // Ensure this node is a symlink
-            if !matches!(node.metadata().dirent_kind(), dirent_kind::symlink) {
+            if !matches!(node.metadata().dirent_kind(), DirentKind::Symlink) {
                 println!("readlink -- einval -- ino: {}", ino);
                 reply.error(EINVAL);
                 return;
@@ -428,7 +434,7 @@ impl Filesystem for SafeFS {
 
             // If there is an existing node in target location, it is moved to trash.
             if let Some((old_ino, ..)) = self.child_by_name(newparent, newname) {
-                ops.push( self.new_opmove(Self::trash(), fs_metadata::Empty, old_ino) );
+                ops.push( self.new_opmove(Self::trash(), FsMetadata::Empty, old_ino) );
             }
 
             // move child to new location/name
@@ -461,7 +467,7 @@ impl Filesystem for SafeFS {
         }
 
         // 3. create tree node under /root/../parent_id
-        let meta = fs_metadata::inode_regular(fs_inode_meta::new(name.to_os_string(), dirent_kind::directory));
+        let meta = FsMetadata::InodeRegular(FsInodeMeta::new(name.to_os_string(), DirentKind::Directory));
         let size = meta.size();
         let op = self.new_opmove_new_child(parent, meta);
         let ino = *op.child_id();
@@ -526,9 +532,9 @@ impl Filesystem for SafeFS {
 
 
                 let filetype: FileType = match k {
-                    dirent_kind::directory => FileType::Directory,
-                    dirent_kind::file => FileType::RegularFile,
-                    dirent_kind::symlink => FileType::Symlink,
+                    DirentKind::Directory => FileType::Directory,
+                    DirentKind::File => FileType::RegularFile,
+                    DirentKind::Symlink => FileType::Symlink,
                 };
 
                 /*
@@ -568,11 +574,12 @@ impl Filesystem for SafeFS {
             let mut meta = node.metadata().clone();
             let cnt = meta.links_inc();
 
-            ops.push(self.new_opmove(*node.parent_id(), meta, ino ));
+            let parent_id = *node.parent_id();
+            ops.push(self.new_opmove(parent_id, meta, ino ));
 
-            let file_ref_meta = fs_ref_meta { name: newname.to_os_string(), inode_id: ino };
+            let file_ref_meta = FsRefMeta { name: newname.to_os_string(), inode_id: ino };
 
-            let meta_ref = fs_metadata::ref_file(file_ref_meta);
+            let meta_ref = FsMetadata::RefFile(file_ref_meta);
             let op_ref = self.new_opmove_new_child(newparent, meta_ref);
             let ref_id = *op_ref.child_id();
             ops.push(op_ref);
@@ -589,7 +596,7 @@ impl Filesystem for SafeFS {
                 crtime: CREATE_TIME,
                 kind: FileType::RegularFile,
                 perm: 0o644,
-                nlink: 1,
+                nlink: cnt as u32,
                 uid: 1000,
                 gid: 20,
                 rdev: 0,
@@ -615,13 +622,13 @@ impl Filesystem for SafeFS {
             let mut ops: Vec::<FsOpMove> = Vec::new();
 
             match node.metadata() {
-                fs_metadata::inode_regular(m) if matches!(m.kind, dirent_kind::symlink) => {
-                    ops.push(self.new_opmove(Self::trash(), fs_metadata::Empty, child ));
+                FsMetadata::InodeRegular(m) if matches!(m.kind, DirentKind::Symlink) => {
+                    ops.push(self.new_opmove(Self::trash(), FsMetadata::Empty, child ));
                 },
-                fs_metadata::ref_file(m) => {
+                FsMetadata::RefFile(m) => {
                     // move the inode reference to trash
                     let inode_id = m.inode_id;
-                    ops.push(self.new_opmove(Self::trash(), fs_metadata::Empty, child ));
+                    ops.push(self.new_opmove(Self::trash(), FsMetadata::Empty, child ));
 
                     // lookup the inode.
                     if let Some(inode) = self.replica.state().tree().find(&inode_id) {
@@ -631,11 +638,12 @@ impl Filesystem for SafeFS {
                         if cnt > 0 {
                             // reference(s) still exist, so we need to update the inode's link count.
                             println!("unlink -- links: {}, preserving inode {}", cnt, inode_id);
-                            ops.push(self.new_opmove(*inode.parent_id(), meta, inode_id));
+                            let parent_id = *inode.parent_id();
+                            ops.push(self.new_opmove(parent_id, meta, inode_id));
                         } else {
                             // when link count has dropped to zero, move the inode to trash
                             println!("unlink -- links: {}, removing inode {}.", cnt, inode_id);
-                            ops.push(self.new_opmove(Self::trash(), fs_metadata::Empty, inode_id));
+                            ops.push(self.new_opmove(Self::trash(), FsMetadata::Empty, inode_id));
                         }
                     }
                 },
@@ -675,14 +683,14 @@ impl Filesystem for SafeFS {
         // fixme: verify parent ino is a directory
 
         // 3. create tree node under /inodes/<x>
-        let file_inode_meta = fs_inode_file_meta {
+        let file_inode_meta = FsInodeFileMeta {
             size: 0 as u64,
             ctime: 0,
             mtime: 0,
             links: 1,
             content: Vec::<u8>::new(),
         };
-        let meta = fs_metadata::inode_file(file_inode_meta);
+        let meta = FsMetadata::InodeFile(file_inode_meta);
         let size = meta.size();
         let links = 1;
 
@@ -692,11 +700,11 @@ impl Filesystem for SafeFS {
         ops.push(op);
 
         // 5. create tree entry under /root/../parent_id
-        let file_ref_meta = fs_ref_meta { name: name.to_os_string(), inode_id };
+        let file_ref_meta = FsRefMeta { name: name.to_os_string(), inode_id };
 
-        let meta_ref = fs_metadata::ref_file(file_ref_meta);
+        let meta_ref = FsMetadata::RefFile(file_ref_meta);
         let op_ref = self.new_opmove_new_child(parent, meta_ref);
-        let ref_id = *op_ref.child_id();
+        // let ref_id = *op_ref.child_id();
         ops.push(op_ref);
 
         self.replica.apply_ops(&ops);
@@ -724,8 +732,8 @@ impl Filesystem for SafeFS {
     fn flush(
         &mut self,
         _req: &Request,
-        ino: u64,
-        fh: u64,
+        _ino: u64,
+        _fh: u64,
         _lock_owner: u64,
         reply: ReplyEmpty
     ) {
@@ -767,10 +775,10 @@ impl Filesystem for SafeFS {
         &mut self,
         _req: &Request,
         ino: u64,
-        fh: u64,
+        _fh: u64,
         offset: i64,
         data: &[u8],
-        flags: u32,
+        _flags: u32,
         reply: ReplyWrite
     ) {
 
@@ -782,7 +790,8 @@ impl Filesystem for SafeFS {
             meta.set_size(size);
 
             // Generate op for updating the tree_node metadata
-            let op = self.new_opmove(*inode.parent_id(), meta, ino );
+            let parent_id = *inode.parent_id();
+            let op = self.new_opmove(parent_id, meta, ino );
 
             self.replica.apply_op(op);
 

@@ -1,10 +1,10 @@
-use crdt_tree;
 use std::collections::HashMap;
 use rand;
 
-use crate::fs_tree_types::{ActorType, TreeIdType, TreeMetaType, FsState, FsClock, FsOpMove};
+use crate::fs_tree_types::{ActorType, FsState, FsClock, FsOpMove};
 
 pub struct TreeReplica {
+    #[allow(dead_code)]    
     actor_id: ActorType,
     state: FsState,
     time: FsClock,
@@ -24,6 +24,7 @@ impl TreeReplica {
         }
     }
 
+    #[allow(dead_code)]
     pub fn actor_id(&self) -> &ActorType {
         &self.actor_id
     }
@@ -54,6 +55,7 @@ impl TreeReplica {
         }
     }
 
+    #[allow(dead_code)]
     pub fn causally_stable_threshold(&self) -> Option<&FsClock> {
 
         // The minimum of latest timestamp from each replica
@@ -69,6 +71,7 @@ impl TreeReplica {
         oldest
     }
 
+    #[allow(dead_code)]
     pub fn truncate_log(&mut self) -> bool {
         if let Some(t) = self.causally_stable_threshold() {
             let tt = t.clone();

@@ -4,17 +4,17 @@ use std::iter;
 
 // metadata for tree nodes of type dir/symlink that live under forest/root (not files)
 #[derive(Debug, Clone)]
-pub struct fs_inode_meta {
+pub struct FsInodeMeta {
     pub name: OsString,
     pub size: u64,
     pub ctime: u32,
     pub mtime: u32,
-    pub kind: dirent_kind,
+    pub kind: DirentKind,
     pub symlink: OsString,   // does not apply to dir.  maybe should be in own struct.
 }
 
-impl fs_inode_meta {
-    pub fn new(name: OsString, kind: dirent_kind) -> Self {
+impl FsInodeMeta {
+    pub fn new(name: OsString, kind: DirentKind) -> Self {
         Self {
             name,
             size: 0,
@@ -28,14 +28,14 @@ impl fs_inode_meta {
 
 // metadata for tree nodes of type file that live under forest/root (not dirs/symlinks)
 #[derive(Debug, Clone)]
-pub struct fs_ref_meta {
+pub struct FsRefMeta {
     pub name: OsString,
-    pub inode_id: u64,   // for looking up fs_inode_meta under /inodes
+    pub inode_id: u64,   // for looking up FsInodeMeta under /inodes
 }
 
 // metadata for tree nodes of type fileinode -- live under forest/fileinodes
 #[derive(Debug, Clone)]
-pub struct fs_inode_file_meta {
+pub struct FsInodeFileMeta {
     pub size: u64,
     pub ctime: u32,
     pub mtime: u32,
@@ -46,107 +46,109 @@ pub struct fs_inode_file_meta {
 
 // enum possible kinds of inode.
 #[derive(Debug, Clone, Copy)]
-pub enum dirent_kind
+pub enum DirentKind
 {
-    file,
-    directory,
-    symlink,
+    File,
+    Directory,
+    Symlink,
 }
 
 #[derive(Debug, Clone)]
-pub enum fs_metadata {
-    inode_regular(fs_inode_meta),
-    inode_file(fs_inode_file_meta),
-    ref_file(fs_ref_meta),
+pub enum FsMetadata {
+    InodeRegular(FsInodeMeta),
+    InodeFile(FsInodeFileMeta),
+    RefFile(FsRefMeta),
     Empty,
 }
 
-impl fs_metadata {
+impl FsMetadata {
     pub fn name(&self) -> &OsStr {
         match self {
-            Self::inode_regular(m) => &m.name,
-            Self::ref_file(m) => &m.name,
+            Self::InodeRegular(m) => &m.name,
+            Self::RefFile(m) => &m.name,
             _ => &OsStr::new(""),
         }
     }
 
-    pub fn dirent_kind(&self) -> dirent_kind {
+    pub fn dirent_kind(&self) -> DirentKind {
         match self {
-            Self::inode_regular(m) => m.kind,
-            _ => dirent_kind::file,
+            Self::InodeRegular(m) => m.kind,
+            _ => DirentKind::File,
         }
     }
 
     pub fn size(&self) -> u64 {
         match self {
-            Self::inode_regular(m) => m.size,
-            Self::inode_file(m) => m.size,
+            Self::InodeRegular(m) => m.size,
+            Self::InodeFile(m) => m.size,
             _ => 0,
         }
     }
 
     pub fn set_size(&mut self, size: u64) {
         match self {
-            Self::inode_regular(m) => { m.size = size },
-            Self::inode_file(m) => { m.size = size },
+            Self::InodeRegular(m) => { m.size = size },
+            Self::InodeFile(m) => { m.size = size },
             _ => {},
         }
     }
 
     pub fn inode_id(&self) -> Option<u64> {
         match self {
-            Self::ref_file(m) => Some(m.inode_id),
+            Self::RefFile(m) => Some(m.inode_id),
             _ => None,
         }
     }
 
     pub fn set_name(&mut self, name: &OsStr) {
         match self {
-            Self::inode_regular(m) => { m.name = name.to_os_string() },
-            Self::ref_file(m) => { m.name = name.to_os_string() },
+            Self::InodeRegular(m) => { m.name = name.to_os_string() },
+            Self::RefFile(m) => { m.name = name.to_os_string() },
             _ => {},
         }
     }
 
     pub fn symlink(&self) -> &OsStr {
         match self {
-            Self::inode_regular(m)  if matches!(m.kind, dirent_kind::symlink) => &m.symlink,
+            Self::InodeRegular(m)  if matches!(m.kind, DirentKind::Symlink) => &m.symlink,
             _ => &OsStr::new(""),
         }
     }
 
     pub fn set_symlink(&mut self, link: &OsStr) {
         match self {
-            Self::inode_regular(m) if matches!(m.kind, dirent_kind::symlink) => { m.symlink = link.to_os_string()},
+            Self::InodeRegular(m) if matches!(m.kind, DirentKind::Symlink) => { m.symlink = link.to_os_string()},
             _ => {},
         }
     }
 
     pub fn links_dec(&mut self) -> usize {
         match self {
-            Self::inode_file(m) => { m.links -= 1; m.links},
+            Self::InodeFile(m) => { m.links -= 1; m.links},
             _ => { 0 },
         }
     }
 
     pub fn links_inc(&mut self) -> usize {
         match self {
-            Self::inode_file(m) => { m.links += 1; m.links },
+            Self::InodeFile(m) => { m.links += 1; m.links },
             _ => { 0 },
         }
     }
 
+/*    
     pub fn set_content(&mut self, content: Vec<u8>) {
         match self {
-            Self::inode_file(m) => { m.content = content },
+            Self::InodeFile(m) => { m.content = content },
             _ => {},
         }
     }
+*/
 
     pub fn update_content(&mut self, new_bytes: &[u8], offset: i64) {
 
         let meta = match self {
-            Self::inode_file(m) => m,
+            Self::InodeFile(m) => m,
             _ => { return; },
         };
 
@@ -169,7 +171,7 @@ impl fs_metadata {
 
     pub fn truncate_content(&mut self, size: u64) {
         let meta = match self {
-            Self::inode_file(m) => m,
+            Self::InodeFile(m) => m,
             _ => { return; },
         };
         meta.content.truncate(size as usize);
@@ -177,7 +179,7 @@ impl fs_metadata {
 
     pub fn content(&self) -> Option<&Vec<u8>> {
         match self {
-            Self::inode_file(m) => Some(&m.content),
+            Self::InodeFile(m) => Some(&m.content),
             _ => None,
         }
     }
