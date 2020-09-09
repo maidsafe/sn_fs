@@ -233,7 +233,7 @@ impl Filesystem for SafeFS {
             };
 
             let attr = FileAttr {
-                ino: ino,
+                ino,
                 size: node.metadata().size(),
                 blocks: 1,
                 atime: CREATE_TIME,
@@ -285,28 +285,25 @@ impl Filesystem for SafeFS {
             };
             let mut attr_size = node.metadata().size();
 
-            match size {
-                Some(new_size) => {
-                    if kind == FileType::RegularFile {
-                        let mut meta = node.metadata().clone();
-                        println!("setattr -- size={}, new_size={})", meta.size(), new_size);
-                        meta.truncate_content(new_size);
-                        meta.set_size(new_size);
-                        let parent_id = *node.parent_id();
+            if let Some(new_size) = size {
+                if kind == FileType::RegularFile {
+                    let mut meta = node.metadata().clone();
+                    println!("setattr -- size={}, new_size={})", meta.size(), new_size);
+                    meta.truncate_content(new_size);
+                    meta.set_size(new_size);
+                    let parent_id = *node.parent_id();
 
-                        let op = self.new_opmove(parent_id, meta, ino);
-                        self.replica.apply_op(op);
-                        attr_size = new_size;
-                    } else {
-                        reply.error(EINVAL);
-                        return;
-                    }
+                    let op = self.new_opmove(parent_id, meta, ino);
+                    self.replica.apply_op(op);
+                    attr_size = new_size;
+                } else {
+                    reply.error(EINVAL);
+                    return;
                 }
-                None => {}
             }
 
             let attr = FileAttr {
-                ino: ino,
+                ino,
                 size: attr_size,
                 blocks: 1,
                 atime: CREATE_TIME,
@@ -691,7 +688,7 @@ impl Filesystem for SafeFS {
         );
 
         // check if already existing
-        if let Some(_) = self.child_by_name(parent, name) {
+        if self.child_by_name(parent, name).is_some() {
             println!("create -- already exists!  bailing out.");
             reply.error(EINVAL);
             return;
@@ -760,7 +757,6 @@ impl Filesystem for SafeFS {
         }*/
 
         reply.ok();
-        return;
     }
 
     fn release(

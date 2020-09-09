@@ -1,4 +1,3 @@
-use rand;
 use std::collections::HashMap;
 
 use crate::fs_tree_types::{ActorType, FsClock, FsOpMove, FsState};
@@ -33,7 +32,7 @@ impl TreeReplica {
     }
 
     pub fn apply_op(&mut self, op: FsOpMove) {
-        let actor_id = op.timestamp().actor_id().clone();
+        let actor_id = *op.timestamp().actor_id();
 
         // store latest timestamp for this actor.
         let result = self.latest_time_by_replica.get(&actor_id);
@@ -46,10 +45,10 @@ impl TreeReplica {
         }
 
         self.time = self.time.merge(op.timestamp());
-        self.state.apply_op(op.clone());
+        self.state.apply_op(op);
     }
 
-    pub fn apply_ops(&mut self, ops: &Vec<FsOpMove>) {
+    pub fn apply_ops(&mut self, ops: &[FsOpMove]) {
         for op in ops {
             self.apply_op(op.clone());
         }
