@@ -1,19 +1,18 @@
-use std::collections::HashMap;
 use rand;
+use std::collections::HashMap;
 
-use crate::fs_tree_types::{ActorType, FsState, FsClock, FsOpMove};
+use crate::fs_tree_types::{ActorType, FsClock, FsOpMove, FsState};
 
 pub struct TreeReplica {
-    #[allow(dead_code)]    
+    #[allow(dead_code)]
     actor_id: ActorType,
     state: FsState,
     time: FsClock,
 
-    latest_time_by_replica: HashMap<ActorType, FsClock>
+    latest_time_by_replica: HashMap<ActorType, FsClock>,
 }
 
 impl TreeReplica {
-
     pub fn new() -> Self {
         let actor_id = rand::random::<ActorType>();
         TreeReplica {
@@ -40,8 +39,9 @@ impl TreeReplica {
         let result = self.latest_time_by_replica.get(&actor_id);
         match result {
             Some(latest) if op.timestamp() > latest => {
-                self.latest_time_by_replica.insert(actor_id, op.timestamp().clone());
-            },
+                self.latest_time_by_replica
+                    .insert(actor_id, op.timestamp().clone());
+            }
             _ => {}
         }
 
@@ -57,15 +57,18 @@ impl TreeReplica {
 
     #[allow(dead_code)]
     pub fn causally_stable_threshold(&self) -> Option<&FsClock> {
-
         // The minimum of latest timestamp from each replica
         // is the causally stable threshold.
         let mut oldest: Option<&FsClock> = None;
         for (_actor_id, timestamp) in self.latest_time_by_replica.iter() {
             match oldest {
-                Some(o) if timestamp < o => {oldest = Some(&timestamp);},
-                None => {oldest = Some(&timestamp);},
-                _ => {},
+                Some(o) if timestamp < o => {
+                    oldest = Some(&timestamp);
+                }
+                None => {
+                    oldest = Some(&timestamp);
+                }
+                _ => {}
             };
         }
         oldest
@@ -84,5 +87,4 @@ impl TreeReplica {
     pub fn tick(&mut self) -> FsClock {
         self.time.tick()
     }
-
 }

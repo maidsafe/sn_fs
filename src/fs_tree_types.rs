@@ -1,5 +1,5 @@
-use crdt_tree;
 use crate::metadata::FsMetadata;
+use crdt_tree;
 
 pub type ActorType = u64;
 pub type TreeIdType = u64;
