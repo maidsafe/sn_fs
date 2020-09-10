@@ -28,51 +28,6 @@ use tree_replica::TreeReplica;
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 }; // 1 second
 
-const CREATE_TIME: Timespec = Timespec {
-    sec: 1381237736,
-    nsec: 0,
-}; // 2013-10-08 08:56
-
-/*
-const HELLO_DIR_ATTR: FileAttr = FileAttr {
-    ino: 1,
-    size: 0,
-    blocks: 0,
-    atime: CREATE_TIME,
-    mtime: CREATE_TIME,
-    ctime: CREATE_TIME,
-    crtime: CREATE_TIME,
-    kind: FileType::Directory,
-    perm: 0o755,
-    nlink: 2,
-    uid: 1000,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-};
-
-
-const HELLO_TXT_CONTENT: &'static str = "Hello World!\n";
-
-const HELLO_TXT_ATTR: FileAttr = FileAttr {
-    ino: 2,
-    size: 13,
-    blocks: 1,
-    atime: CREATE_TIME,
-    mtime: CREATE_TIME,
-    ctime: CREATE_TIME,
-    crtime: CREATE_TIME,
-    kind: FileType::RegularFile,
-    perm: 0o644,
-    nlink: 1,
-    uid: 1000,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-};
-
-*/
-
 struct SafeFS {
     replica: TreeReplica,
 }
@@ -181,6 +136,7 @@ impl Filesystem for SafeFS {
                 size: 0,
                 links: 1,
                 ctime: Self::now(),
+                crtime: Self::now(),
                 mtime: Self::now(),
             }
         });
@@ -219,10 +175,10 @@ impl Filesystem for SafeFS {
                 ino,
                 size: meta.size(),
                 blocks: 1,
-                atime: CREATE_TIME,
+                atime: meta.crtime(),
                 mtime: meta.mtime(),
                 ctime: meta.ctime(),
-                crtime: CREATE_TIME,
+                crtime: meta.crtime(),
                 kind,
                 perm: 0o644,
                 nlink: meta.links(),
@@ -265,10 +221,10 @@ impl Filesystem for SafeFS {
                 ino,
                 size: meta.size(),
                 blocks: 1,
-                atime: CREATE_TIME,
+                atime: meta.crtime(),
                 mtime: meta.mtime(),
                 ctime: meta.ctime(),
-                crtime: CREATE_TIME,
+                crtime: meta.crtime(),
                 kind,
                 perm: 0o644,
                 nlink: meta.links(),
@@ -293,10 +249,10 @@ impl Filesystem for SafeFS {
         gid: Option<u32>,
         size: Option<u64>,
         _atime: Option<Timespec>,
-        _mtime: Option<Timespec>,
+        mtime: Option<Timespec>,
         _fh: Option<u64>,
-        _crtime: Option<Timespec>,
-        _chgtime: Option<Timespec>,
+        crtime: Option<Timespec>,
+        ctime: Option<Timespec>,
         _bkuptime: Option<Timespec>,
         flags: Option<u32>,
         reply: ReplyAttr,
@@ -319,17 +275,24 @@ impl Filesystem for SafeFS {
 
             let mut meta = node.metadata().clone();
 
+            if let Some(new_mtime) = mtime {
+                println!("setattr -- old_mtime={:?}, new_mtime={:?})", meta.mtime(), new_mtime);
+                meta.set_mtime(new_mtime);
+            }
+            if let Some(new_crtime) = crtime {
+                println!("setattr -- old_crtime={:?}, new_crtime={:?})", meta.crtime(), new_crtime);
+                meta.set_crtime(new_crtime);
+            }
+            if let Some(new_ctime) = ctime {
+                println!("setattr -- old_ctime={:?}, new_ctime={:?})", meta.ctime(), new_ctime);
+                meta.set_ctime(new_ctime);
+            }
+
             if let Some(new_size) = size {
                 if kind == FileType::RegularFile {
-                    println!("setattr -- size={}, new_size={})", meta.size(), new_size);
+                    println!("setattr -- old_size={}, new_size={})", meta.size(), new_size);
                     meta.truncate_content(new_size);
                     meta.set_size(new_size);
-                    meta.set_mtime(Self::now());
-                    let parent_id = *node.parent_id();
-
-                    let op = self.new_opmove(parent_id, meta.clone(), ino);
-                    self.replica.apply_op(op);
-
                 } else {
                     reply.error(EINVAL);
                     return;
@@ -340,10 +303,10 @@ impl Filesystem for SafeFS {
                 ino,
                 size: meta.size(),
                 blocks: 1,
-                atime: CREATE_TIME,
+                atime: meta.crtime(),
                 mtime: meta.mtime(),
                 ctime: meta.ctime(),
-                crtime: CREATE_TIME,
+                crtime: meta.crtime(),
                 kind,
                 perm: mode.unwrap_or(0o644) as u16,
                 nlink: meta.links(),
@@ -352,6 +315,13 @@ impl Filesystem for SafeFS {
                 rdev: 0,
                 flags: flags.unwrap_or(0),
             };
+
+            if meta != *node.metadata() {
+                let parent_id = *node.parent_id();
+                let op = self.new_opmove(parent_id, meta, ino);
+                self.replica.apply_op(op);
+            }
+
             reply.attr(&TTL, &attr);
 
         } else {
@@ -408,6 +378,7 @@ impl Filesystem for SafeFS {
                     size: 0,
                     links: 1,
                     ctime: Self::now(),
+                    crtime: Self::now(),
                     mtime: Self::now(),
                 }
             });
@@ -419,10 +390,10 @@ impl Filesystem for SafeFS {
                 ino,
                 size: meta.size(),
                 blocks: 1,
-                atime: CREATE_TIME,
+                atime: meta.crtime(),
                 mtime: meta.mtime(),
                 ctime: meta.ctime(),
-                crtime: CREATE_TIME,
+                crtime: meta.crtime(),
                 kind: FileType::Symlink,
                 perm: 0o644,
                 nlink: meta.links(),
@@ -478,16 +449,18 @@ impl Filesystem for SafeFS {
 
         // find child of parent that matches $name
         if let Some((child, node)) = self.child_by_name(parent, name) {
-            let mut meta = node.metadata().clone();
-            meta.set_name(newname);
+            let mut newmeta = node.metadata().clone();
+            newmeta.set_name(newname);
 
             // If there is an existing node in target location, it is moved to trash.
-            if let Some((old_ino, ..)) = self.child_by_name(newparent, newname) {
-                ops.push(self.new_opmove(Self::trash(), FsMetadata::Empty, old_ino));
+            if let Some((old_ino, node)) = self.child_by_name(newparent, newname) {
+                println!("rename -- moving old `{:?}` to trash", newname);
+                let meta = node.metadata().clone();
+                ops.push(self.new_opmove(Self::trash(), meta, old_ino));
             }
 
             // move child to new location/name
-            ops.push(self.new_opmove(newparent, meta, child));
+            ops.push(self.new_opmove(newparent, newmeta, child));
             self.replica.apply_ops(&ops);
 
             reply.ok();
@@ -514,6 +487,7 @@ impl Filesystem for SafeFS {
                     size: 0,
                     links: 1,
                     ctime: Self::now(),
+                    crtime: Self::now(),
                     mtime: Self::now(),
                 },
             });
@@ -527,10 +501,10 @@ impl Filesystem for SafeFS {
             ino,
             size: meta.size(),
             blocks: 1,
-            atime: CREATE_TIME,
+            atime: meta.crtime(),
             mtime: meta.mtime(),
             ctime: meta.ctime(),
-            crtime: CREATE_TIME,
+            crtime: meta.crtime(),
             kind: FileType::Directory,
             perm: 0o644,
             nlink: meta.links(),
@@ -649,10 +623,10 @@ impl Filesystem for SafeFS {
                 ino,
                 size: meta.size(),
                 blocks: 1,
-                atime: CREATE_TIME,
+                atime: meta.crtime(),
                 mtime: meta.mtime(),
                 ctime: meta.ctime(),
-                crtime: CREATE_TIME,
+                crtime: meta.crtime(),
                 kind: FileType::RegularFile,
                 perm: 0o644,
                 nlink: meta.links(),
@@ -701,6 +675,7 @@ impl Filesystem for SafeFS {
                     // lookup the inode.
                     if let Some(inode) = self.replica.state().tree().find(&inode_id) {
                         let mut meta = inode.metadata().clone();
+                        meta.set_ctime(Self::now());
                         let cnt = meta.links_dec();
 
                         if cnt > 0 {
@@ -710,8 +685,10 @@ impl Filesystem for SafeFS {
                             ops.push(self.new_opmove(parent_id, meta, inode_id));
                         } else {
                             // when link count has dropped to zero, move the inode to trash
+                            // we must preserve the metadata because some process(es) may still
+                            // have the file open for reading/writing.
                             println!("unlink -- links: {}, removing inode {}.", cnt, inode_id);
-                            ops.push(self.new_opmove(Self::trash(), FsMetadata::Empty, inode_id));
+                            ops.push(self.new_opmove(Self::trash(), meta, inode_id));
                         }
                     }
                 }
@@ -759,6 +736,7 @@ impl Filesystem for SafeFS {
             common: FsInodeCommon {
                 size: 0,
                 ctime: Self::now(),
+                crtime: Self::now(),
                 mtime: Self::now(),
                 links: 1,
             }
@@ -787,10 +765,10 @@ impl Filesystem for SafeFS {
             ino: inode_id,
             size: meta.size(),
             blocks: 1,
-            atime: CREATE_TIME,
+            atime: meta.crtime(),
             mtime: meta.mtime(),
             ctime: meta.ctime(),
-            crtime: CREATE_TIME,
+            crtime: meta.crtime(),
             kind: FileType::RegularFile,
             perm: 0o644,
             nlink: meta.links(),
@@ -824,7 +802,7 @@ impl Filesystem for SafeFS {
         flush: bool,
         reply: ReplyEmpty,
     ) {
-        eprintln!("release -- ino={}, fh={}, flush={}", ino, fh, flush);
+        println!("release -- ino={}, fh={}, flush={}", ino, fh, flush);
 
         /*if flush {
             match util::fsync(fh as i32) {
@@ -840,18 +818,22 @@ impl Filesystem for SafeFS {
         &mut self,
         _req: &Request,
         ino: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
         data: &[u8],
-        _flags: u32,
+        flags: u32,
         reply: ReplyWrite,
     ) {
+        println!("write -- ino={}, fh={}, offset={}, flags={}", ino, fh, offset, flags);
+
         // find tree node from inode_id
         if let Some(inode) = self.replica.state().tree().find(&ino) {
             let mut meta = inode.metadata().clone();
+            println!("write -- found metadata: {:?}", meta);
             meta.update_content(&data, offset);
-            let size = meta.content().unwrap().len() as u64;
+            let size = meta.content().unwrap().len() as u64;  // fixme: unwrap.
             meta.set_size(size);
+            meta.set_mtime(Self::now());
 
             // Generate op for updating the tree_node metadata
             let parent_id = *inode.parent_id();

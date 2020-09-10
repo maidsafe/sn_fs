@@ -3,22 +3,23 @@ use std::iter;
 use time::Timespec; // unix specific.
 use log::warn;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeCommon {
     pub size: u64,
-    pub ctime: Timespec,
-    pub mtime: Timespec,
+    pub mtime: Timespec,   // modified time. (file contents changed)
+    pub ctime: Timespec,   // changed time.  (metadata changed)
+    pub crtime: Timespec,  // created time.  
     pub links: u32,
 }
 
 // metadata for tree nodes of type dir/symlink that live under forest/root (not files)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeDirectory {
     pub common: FsInodeCommon,
     pub name: OsString,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeSymlink {
     pub common: FsInodeCommon,
     pub name: OsString,
@@ -26,7 +27,7 @@ pub struct FsInodeSymlink {
 }
 
 // metadata for tree nodes of type fileinode -- live under forest/fileinodes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeFile {
     pub common: FsInodeCommon,
     // public $xorname;  for now, store data in content.
@@ -34,7 +35,7 @@ pub struct FsInodeFile {
 }
 
 // metadata for tree nodes of type file that live under forest/root (not dirs/symlinks)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FsRefFile {
     pub name: OsString,
     pub inode_id: u64, // for looking up FsInodeMeta under /inodes
@@ -48,7 +49,7 @@ pub enum DirentKind {
     Symlink,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FsMetadata {
     InodeDirectory(FsInodeDirectory),
     InodeSymlink(FsInodeSymlink),
@@ -157,6 +158,40 @@ impl FsMetadata {
             _ => {
                 warn!("ctime not supported for {:?}", self);
                 time::empty_tm().to_timespec()
+            },
+        }
+    }
+
+    pub fn set_ctime(&mut self, ts: Timespec) {
+        match self {
+            Self::InodeDirectory(m) => { m.common.ctime = ts; },
+            Self::InodeSymlink(m) => { m.common.ctime = ts; },
+            Self::InodeFile(m) => { m.common.ctime = ts; },
+            _ => {
+                warn!("ctime not supported for {:?}", self);
+            },
+        }
+    }
+
+    pub fn crtime(&self) -> Timespec {
+        match self {
+            Self::InodeDirectory(m) => m.common.crtime,
+            Self::InodeSymlink(m) => m.common.crtime,
+            Self::InodeFile(m) => m.common.crtime,
+            _ => {
+                warn!("crtime not supported for {:?}", self);
+                time::empty_tm().to_timespec()
+            },
+        }
+    }
+
+    pub fn set_crtime(&mut self, ts: Timespec) {
+        match self {
+            Self::InodeDirectory(m) => { m.common.crtime = ts; },
+            Self::InodeSymlink(m) => { m.common.crtime = ts; },
+            Self::InodeFile(m) => { m.common.crtime = ts; },
+            _ => {
+                warn!("crtime not supported for {:?}", self);
             },
         }
     }
