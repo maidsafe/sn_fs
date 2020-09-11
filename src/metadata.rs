@@ -1,14 +1,14 @@
+use log::{debug, warn};
 use std::ffi::{OsStr, OsString};
 use std::iter;
 use time::Timespec; // unix specific.
-use log::warn;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeCommon {
     pub size: u64,
-    pub mtime: Timespec,   // modified time. (file contents changed)
-    pub ctime: Timespec,   // changed time.  (metadata changed)
-    pub crtime: Timespec,  // created time.  
+    pub mtime: Timespec,  // modified time. (file contents changed)
+    pub ctime: Timespec,  // changed time.  (metadata changed)
+    pub crtime: Timespec, // created time.
     pub links: u32,
 }
 
@@ -55,7 +55,7 @@ pub enum FsMetadata {
     InodeSymlink(FsInodeSymlink),
     InodeFile(FsInodeFile),
     RefFile(FsRefFile),
-    Empty,  // Used when inode has been moved to trash.
+    Empty, // Used when inode has been moved to trash.  (symlinks and directores only)
 }
 
 impl FsMetadata {
@@ -68,7 +68,7 @@ impl FsMetadata {
         }
     }
 
-    #[allow(dead_code)]    
+    #[allow(dead_code)]
     pub fn is_inode_directory(&self) -> bool {
         match self {
             Self::InodeDirectory(_) => true,
@@ -76,7 +76,7 @@ impl FsMetadata {
         }
     }
 
-    #[allow(dead_code)]    
+    #[allow(dead_code)]
     pub fn is_inode_symlink(&self) -> bool {
         match self {
             Self::InodeSymlink(_) => true,
@@ -84,7 +84,7 @@ impl FsMetadata {
         }
     }
 
-    #[allow(dead_code)]    
+    #[allow(dead_code)]
     pub fn is_inode_file(&self) -> bool {
         match self {
             Self::InodeFile(_) => true,
@@ -92,7 +92,7 @@ impl FsMetadata {
         }
     }
 
-    #[allow(dead_code)]    
+    #[allow(dead_code)]
     pub fn is_ref_file(&self) -> bool {
         match self {
             Self::RefFile(_) => true,
@@ -100,7 +100,7 @@ impl FsMetadata {
         }
     }
 
-    #[allow(dead_code)]    
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Empty => true,
@@ -135,18 +135,24 @@ impl FsMetadata {
             _ => {
                 warn!("mtime not supported for {:?}", self);
                 time::empty_tm().to_timespec()
-            },
+            }
         }
     }
 
     pub fn set_mtime(&mut self, ts: Timespec) {
         match self {
-            Self::InodeDirectory(m) => { m.common.mtime = ts; },
-            Self::InodeSymlink(m) => { m.common.mtime = ts; },
-            Self::InodeFile(m) => { m.common.mtime = ts; },
+            Self::InodeDirectory(m) => {
+                m.common.mtime = ts;
+            }
+            Self::InodeSymlink(m) => {
+                m.common.mtime = ts;
+            }
+            Self::InodeFile(m) => {
+                m.common.mtime = ts;
+            }
             _ => {
                 warn!("mtime not supported for {:?}", self);
-            },
+            }
         }
     }
 
@@ -158,18 +164,24 @@ impl FsMetadata {
             _ => {
                 warn!("ctime not supported for {:?}", self);
                 time::empty_tm().to_timespec()
-            },
+            }
         }
     }
 
     pub fn set_ctime(&mut self, ts: Timespec) {
         match self {
-            Self::InodeDirectory(m) => { m.common.ctime = ts; },
-            Self::InodeSymlink(m) => { m.common.ctime = ts; },
-            Self::InodeFile(m) => { m.common.ctime = ts; },
+            Self::InodeDirectory(m) => {
+                m.common.ctime = ts;
+            }
+            Self::InodeSymlink(m) => {
+                m.common.ctime = ts;
+            }
+            Self::InodeFile(m) => {
+                m.common.ctime = ts;
+            }
             _ => {
                 warn!("ctime not supported for {:?}", self);
-            },
+            }
         }
     }
 
@@ -181,18 +193,24 @@ impl FsMetadata {
             _ => {
                 warn!("crtime not supported for {:?}", self);
                 time::empty_tm().to_timespec()
-            },
+            }
         }
     }
 
     pub fn set_crtime(&mut self, ts: Timespec) {
         match self {
-            Self::InodeDirectory(m) => { m.common.crtime = ts; },
-            Self::InodeSymlink(m) => { m.common.crtime = ts; },
-            Self::InodeFile(m) => { m.common.crtime = ts; },
+            Self::InodeDirectory(m) => {
+                m.common.crtime = ts;
+            }
+            Self::InodeSymlink(m) => {
+                m.common.crtime = ts;
+            }
+            Self::InodeFile(m) => {
+                m.common.crtime = ts;
+            }
             _ => {
                 warn!("crtime not supported for {:?}", self);
-            },
+            }
         }
     }
 
@@ -228,12 +246,11 @@ impl FsMetadata {
         }
     }
 
-    #[allow(dead_code)]    
+    #[allow(dead_code)]
     pub fn set_symlink(&mut self, link: &OsStr) {
-        match self {
-            Self::InodeSymlink(m) => { m.symlink = link.to_os_string(); },
-            _ => {}
-        }
+        if let Self::InodeSymlink(m) = self {
+            m.symlink = link.to_os_string();
+        }        
     }
 
     pub fn links_dec(&mut self) -> u32 {
@@ -241,15 +258,15 @@ impl FsMetadata {
             Self::InodeDirectory(m) => {
                 m.common.links -= 1;
                 m.common.links
-            },
+            }
             Self::InodeSymlink(m) => {
                 m.common.links -= 1;
                 m.common.links
-            },
+            }
             Self::InodeFile(m) => {
                 m.common.links -= 1;
                 m.common.links
-            },
+            }
             _ => 0,
         }
     }
@@ -259,15 +276,15 @@ impl FsMetadata {
             Self::InodeDirectory(m) => {
                 warn!("Attempted to increment link count on InodeDirectory");
                 m.common.links
-            },
+            }
             Self::InodeSymlink(m) => {
                 warn!("Attempted to increment link count on InodeSymlink");
                 m.common.links
-            },
+            }
             Self::InodeFile(m) => {
                 m.common.links += 1;
                 m.common.links
-            },
+            }
             _ => {
                 warn!("Attempted to increment link count on {:?}", self);
                 0
@@ -277,27 +294,12 @@ impl FsMetadata {
 
     pub fn links(&self) -> u32 {
         match self {
-            Self::InodeDirectory(m) => {
-                m.common.links
-            },
-            Self::InodeSymlink(m) => {
-                m.common.links
-            },
-            Self::InodeFile(m) => {
-                m.common.links
-            },
+            Self::InodeDirectory(m) => m.common.links,
+            Self::InodeSymlink(m) => m.common.links,
+            Self::InodeFile(m) => m.common.links,
             _ => 0,
         }
     }
-
-    /*
-        pub fn set_content(&mut self, content: Vec<u8>) {
-            match self {
-                Self::InodeFile(m) => { m.content = content },
-                _ => {},
-            }
-        }
-    */
 
     pub fn update_content(&mut self, new_bytes: &[u8], offset: i64) {
         let meta = match self {
@@ -321,13 +323,12 @@ impl FsMetadata {
             meta.content
                 .splice(offset..offset + new_bytes.len(), new_bytes.iter().cloned());
         }
-        println!(
+        debug!(
             "update(): len of new bytes is {}, total len is {}, offset was {}",
             new_bytes.len(),
             meta.content.len(),
             offset
         );
-        // new_bytes.len() as u64
     }
 
     pub fn truncate_content(&mut self, size: u64) {
