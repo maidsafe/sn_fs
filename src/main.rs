@@ -14,7 +14,7 @@ use fuse::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyOpen, ReplyWrite, Request,
 };
-use libc::{EINVAL, ENOENT, ENOTEMPTY};
+use libc::{EINVAL, ENOENT, ENOTEMPTY, EEXIST};
 use std::env;
 use std::ffi::OsStr;
 use std::os::raw::c_int;
@@ -24,7 +24,7 @@ use time::Timespec; // unix specific.
 
 use fs_tree_types::{FsOpMove, FsTreeNode};
 use metadata::{
-    DirentKind, FsInodeCommon, FsInodeDirectory, FsInodeFile, FsInodeSymlink, FsMetadata, FsRefFile,
+    DirentKind, FsInodeCommon, FsInodeDirectory, FsInodeFile, FsInodeSymlink, FsMetadata, FsRefFile, FsInodeOs, FsInodePosix
 };
 use tree_replica::TreeReplica;
 
@@ -124,6 +124,14 @@ impl SafeFS {
     fn now() -> Timespec {
         time::now().to_timespec()
     }
+
+    #[inline]
+    fn verify_directory(&self, parent: u64) -> Option<&FsTreeNode> {
+        match self.replica.state().tree().find(&parent) {
+            Some(node) if node.metadata().is_inode_directory() => Some(node),
+            _ => None,
+        }
+    }
 }
 
 impl Filesystem for SafeFS {
@@ -136,6 +144,13 @@ impl Filesystem for SafeFS {
                 ctime: Self::now(),
                 crtime: Self::now(),
                 mtime: Self::now(),
+                osattrs: FsInodeOs::Posix(FsInodePosix {
+                    perm: 0o744,
+                    uid: getuid().as_raw() as u32,
+                    gid: getuid().as_raw() as u32,
+                    rdev: 0,
+                    flags: 0,
+                })
             },
         });
         let op = self.new_opmove(Self::forest(), meta, Self::root());
@@ -178,12 +193,12 @@ impl Filesystem for SafeFS {
                 ctime: meta.ctime(),
                 crtime: meta.crtime(),
                 kind,
-                perm: 0o644,
                 nlink: meta.links(),
-                uid: getuid().as_raw() as u32,
-                gid: getgid().as_raw() as u32,
-                rdev: 0,
-                flags: 0,
+                perm: meta.posix_perm().unwrap_or(0o644),
+                uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
+                gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
+                rdev: meta.posix_rdev().unwrap_or(0),
+                flags: meta.posix_flags().unwrap_or(0),
             };
             reply.entry(&TTL, &attr, 0);
         } else {
@@ -217,12 +232,12 @@ impl Filesystem for SafeFS {
                 ctime: meta.ctime(),
                 crtime: meta.crtime(),
                 kind,
-                perm: 0o644,
                 nlink: meta.links(),
-                uid: getuid().as_raw() as u32,
-                gid: getgid().as_raw() as u32,
-                rdev: 0,
-                flags: 0,
+                perm: meta.posix_perm().unwrap_or(0o644),
+                uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
+                gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
+                rdev: meta.posix_rdev().unwrap_or(0),
+                flags: meta.posix_flags().unwrap_or(0),
             };
 
             reply.attr(&TTL, &attr);
@@ -249,8 +264,8 @@ impl Filesystem for SafeFS {
         reply: ReplyAttr,
     ) {
         debug!(
-            "setattr -- ino: {}, mode: {:?}, uid: {:?}, gid: {:?}",
-            ino, mode, uid, gid
+            "setattr -- ino: {}, mode: {:?}, uid: {:?}, gid: {:?}, flags: {:?}",
+            ino, mode, uid, gid, flags
         );
 
         if let Some(node) = self.replica.state().tree().find(&ino) {
@@ -306,6 +321,62 @@ impl Filesystem for SafeFS {
                 }
             }
 
+            if let Some(new_uid) = uid {
+                debug!(
+                    "setattr -- old_uid={:?}, new_uid={:?})",
+                    meta.posix_uid(),
+                    new_uid
+                );
+                if let Some(p) = meta.posix() {
+                    p.uid = new_uid;
+                } else {
+                    reply.error(EINVAL);
+                    return;
+                }                
+            }
+
+            if let Some(new_gid) = gid {
+                debug!(
+                    "setattr -- old_gid={:?}, new_gid={:?})",
+                    meta.posix_gid(),
+                    new_gid
+                );
+                if let Some(p) = meta.posix() {
+                    p.gid = new_gid;
+                } else {
+                    reply.error(EINVAL);
+                    return;
+                }                
+            }
+
+            if let Some(new_perm) = mode {
+                debug!(
+                    "setattr -- old_perm={:?}, new_perm={:?})",
+                    meta.posix_perm(),
+                    new_perm
+                );
+                if let Some(p) = meta.posix() {
+                    p.perm = new_perm as u16;
+                } else {
+                    reply.error(EINVAL);
+                    return;
+                }                
+            }
+
+            if let Some(new_flags) = flags {
+                debug!(
+                    "setattr -- old_flags={:?}, new_flags={:?})",
+                    meta.posix_flags(),
+                    new_flags
+                );
+                if let Some(p) = meta.posix() {
+                    p.flags = new_flags;
+                } else {
+                    reply.error(EINVAL);
+                    return;
+                }                
+            }
+
             let attr = FileAttr {
                 ino,
                 size: meta.size(),
@@ -315,14 +386,15 @@ impl Filesystem for SafeFS {
                 ctime: meta.ctime(),
                 crtime: meta.crtime(),
                 kind,
-                perm: mode.unwrap_or(0o644) as u16,
                 nlink: meta.links(),
-                uid: getuid().as_raw() as u32,
-                gid: getgid().as_raw() as u32,
-                rdev: 0,
-                flags: flags.unwrap_or(0),
+                perm: meta.posix_perm().unwrap_or(0o644),
+                uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
+                gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
+                rdev: meta.posix_rdev().unwrap_or(0),
+                flags: meta.posix_flags().unwrap_or(0),
             };
 
+            // If metadata changed, we need to generate a Move op.
             if meta != *node.metadata() {
                 let parent_id = *node.parent_id();
                 let op = self.new_opmove(parent_id, meta, ino);
@@ -363,7 +435,7 @@ impl Filesystem for SafeFS {
 
     fn symlink(
         &mut self,
-        _req: &Request,
+        req: &Request,
         parent: u64,
         name: &OsStr,
         link: &Path,
@@ -386,6 +458,13 @@ impl Filesystem for SafeFS {
                     ctime: Self::now(),
                     crtime: Self::now(),
                     mtime: Self::now(),
+                    osattrs: FsInodeOs::Posix(FsInodePosix {
+                        perm: 0o777,
+                        uid: req.uid(),
+                        gid: req.gid(),
+                        rdev: 0,
+                        flags: 0,
+                    })                    
                 },
             });
 
@@ -401,12 +480,12 @@ impl Filesystem for SafeFS {
                 ctime: meta.ctime(),
                 crtime: meta.crtime(),
                 kind: FileType::Symlink,
-                perm: 0o644,
                 nlink: meta.links(),
-                uid: getuid().as_raw() as u32,
-                gid: getgid().as_raw() as u32,
-                rdev: 0,
-                flags: 0,
+                perm: meta.posix_perm().unwrap_or(0o644),
+                uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
+                gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
+                rdev: meta.posix_rdev().unwrap_or(0),
+                flags: meta.posix_flags().unwrap_or(0),
             };
 
             self.replica.apply_op(op);
@@ -475,17 +554,16 @@ impl Filesystem for SafeFS {
         }
     }
 
-    fn mkdir(&mut self, _req: &Request, parent: u64, name: &OsStr, _mode: u32, reply: ReplyEntry) {
-        // 2. find parent dir (under /root/)
-        let result = self.replica.state().tree().find(&parent);
+    fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, _mode: u32, reply: ReplyEntry) {
 
-        // fixme: check if node is a directory.
-        if result.is_none() && parent != 1 {
-            reply.error(ENOENT);
+        // check if parent exists and is a directory.
+        if !self.verify_directory(parent).is_some() {
+            // not a directory
+            reply.error(EINVAL);
             return;
         }
 
-        // 3. create tree node under /root/../parent_id
+        // create tree node under /root/../parent_id
         let meta = FsMetadata::InodeDirectory(FsInodeDirectory {
             name: name.to_os_string(),
             common: FsInodeCommon {
@@ -494,6 +572,13 @@ impl Filesystem for SafeFS {
                 ctime: Self::now(),
                 crtime: Self::now(),
                 mtime: Self::now(),
+                osattrs: FsInodeOs::Posix(FsInodePosix {
+                    perm: 0o744,
+                    uid: req.uid(),
+                    gid: req.gid(),
+                    rdev: 0,
+                    flags: 0,
+                })                
             },
         });
 
@@ -511,12 +596,12 @@ impl Filesystem for SafeFS {
             ctime: meta.ctime(),
             crtime: meta.crtime(),
             kind: FileType::Directory,
-            perm: 0o644,
             nlink: meta.links(),
-            uid: getuid().as_raw() as u32,
-            gid: getgid().as_raw() as u32,
-            rdev: 0,
-            flags: 0,
+            perm: meta.posix_perm().unwrap_or(0o644),
+            uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
+            gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
+            rdev: meta.posix_rdev().unwrap_or(0),
+            flags: meta.posix_flags().unwrap_or(0),
         };
 
         reply.entry(&TTL, &attr, 1);
@@ -590,13 +675,17 @@ impl Filesystem for SafeFS {
             ino, newparent, newname
         );
 
+        // check if newname entry already exists.  (return EEXIST)
+        if self.child_by_name(newparent, newname).is_some() {
+            reply.error(EEXIST);
+            return;
+        }
+
         let mut ops: Vec<FsOpMove> = Vec::new();
 
         if let Some(node) = self.replica.state().tree().find(&ino) {
             let mut meta = node.metadata().clone();
             meta.links_inc();
-
-            // fixme: check if newname entry already exists.  (return EEXIST)
 
             let attr = FileAttr {
                 ino,
@@ -607,12 +696,12 @@ impl Filesystem for SafeFS {
                 ctime: meta.ctime(),
                 crtime: meta.crtime(),
                 kind: FileType::RegularFile,
-                perm: 0o644,
                 nlink: meta.links(),
-                uid: getuid().as_raw() as u32,
-                gid: getgid().as_raw() as u32,
-                rdev: 0,
-                flags: 0,
+                perm: meta.posix_perm().unwrap_or(0o644),
+                uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
+                gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
+                rdev: meta.posix_rdev().unwrap_or(0),
+                flags: meta.posix_flags().unwrap_or(0),
             };
 
             let parent_id = *node.parent_id();
@@ -686,7 +775,7 @@ impl Filesystem for SafeFS {
 
     fn create(
         &mut self,
-        _req: &Request,
+        req: &Request,
         parent: u64,
         name: &OsStr,
         mode: u32,
@@ -698,6 +787,13 @@ impl Filesystem for SafeFS {
             parent, name, mode, flags
         );
 
+        // check if parent exists and is a directory.
+        if !self.verify_directory(parent).is_some() {
+            // not a directory
+            reply.error(EINVAL);
+            return;
+        }
+
         // check if already existing
         if self.child_by_name(parent, name).is_some() {
             debug!("create -- already exists!  bailing out.");
@@ -705,9 +801,7 @@ impl Filesystem for SafeFS {
             return;
         }
 
-        let mut ops: Vec<FsOpMove> = Vec::new();
-
-        // fixme: verify parent ino is a directory
+        let mut ops: Vec<FsOpMove> = Vec::new();        
 
         // 3. create tree node under /inodes/<x>
         let file_inode_meta = FsInodeFile {
@@ -718,6 +812,13 @@ impl Filesystem for SafeFS {
                 crtime: Self::now(),
                 mtime: Self::now(),
                 links: 1,
+                osattrs: FsInodeOs::Posix(FsInodePosix {
+                    perm: 0o644,
+                    uid: req.uid(),
+                    gid: req.gid(),
+                    rdev: 0,
+                    flags,
+                })
             },
         };
         let meta = FsMetadata::InodeFile(file_inode_meta);
@@ -749,12 +850,12 @@ impl Filesystem for SafeFS {
             ctime: meta.ctime(),
             crtime: meta.crtime(),
             kind: FileType::RegularFile,
-            perm: 0o644,
             nlink: meta.links(),
-            uid: getuid().as_raw() as u32,
-            gid: getgid().as_raw() as u32,
-            rdev: 0,
-            flags: 0,
+            perm: meta.posix_perm().unwrap_or(0o644),
+            uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
+            gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
+            rdev: meta.posix_rdev().unwrap_or(0),
+            flags: meta.posix_flags().unwrap_or(0),
         };
 
         reply.created(&TTL, &attr, 1, 0 as u64, 0 as u32);
@@ -846,8 +947,12 @@ impl Filesystem for SafeFS {
 fn main() {
     env_logger::init();
     let mountpoint = env::args_os().nth(1).unwrap();
+    // Notes: 
+    //  1. todo: these options should come from command line.
+    //  2. allow_other enables other users to read/write.  Required for testing chown.
+    //  3. allow_other requires that `user_allow_other` is in /etc/fuse.conf.
     //    let options = ["-o", "ro", "-o", "fsname=safefs"]    // -o ro = mount read only
-    let options = ["-o", "fsname=safefs"]
+    let options = ["-o", "fsname=safe_fs,allow_other"]
         .iter()
         .map(|o| o.as_ref())
         .collect::<Vec<&OsStr>>();

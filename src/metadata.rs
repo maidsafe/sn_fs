@@ -3,6 +3,44 @@ use std::ffi::{OsStr, OsString};
 use std::iter;
 use time::Timespec; // unix specific.
 
+// Note:  here is a useful article about FileSystem attributes
+//        by OS:   https://en.wikipedia.org/wiki/File_attribute
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FsInodePosix {
+    pub perm: u16,
+    pub uid: u32,
+    pub gid: u32,
+    pub rdev: u32,
+    pub flags: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FsInodeWindows {
+    pub archive: bool,
+    pub hidden: bool,
+    pub system: bool,
+    pub readonly: bool,
+    pub compressed: bool,
+    pub encrypted: bool,
+    pub notcontentindexed: bool,
+    pub reparsepoint: bool,
+    pub notindexed: bool,
+    pub offline: bool,
+    pub sparse: bool,
+    pub temporary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FsInodeOs {
+    Posix(FsInodePosix),
+    #[allow(dead_code)]
+    Windows(FsInodeWindows),
+    #[allow(dead_code)]
+    Empty,                // no OS specific attrs.
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeCommon {
     pub size: u64,
@@ -10,6 +48,7 @@ pub struct FsInodeCommon {
     pub ctime: Timespec,  // changed time.  (metadata changed)
     pub crtime: Timespec, // created time.
     pub links: u32,
+    pub osattrs: FsInodeOs,
 }
 
 // metadata for tree nodes of type dir/symlink that live under forest/root (not files)
@@ -56,6 +95,51 @@ pub enum FsMetadata {
     InodeFile(FsInodeFile),
     RefFile(FsRefFile),
     Empty, // Used when inode has been moved to trash.  (symlinks and directores only)
+}
+
+impl FsInodeOs {
+
+    pub fn posix(&mut self) -> Option<&mut FsInodePosix> {
+        match self {
+            Self::Posix(p) => Some(p),
+            _ => None
+        }
+    }
+
+    pub fn posix_uid(&self) -> Option<u32> {
+        match self {
+            Self::Posix(p) => Some(p.uid),
+            _ => None
+        }
+    }
+
+    pub fn posix_gid(&self) -> Option<u32> {
+        match self {
+            Self::Posix(p) => Some(p.gid),
+            _ => None
+        }
+    }
+
+    pub fn posix_perm(&self) -> Option<u16> {
+        match self {
+            Self::Posix(p) => Some(p.perm),
+            _ => None
+        }
+    }
+
+    pub fn posix_rdev(&self) -> Option<u32> {
+        match self {
+            Self::Posix(p) => Some(p.rdev),
+            _ => None
+        }
+    }
+
+    pub fn posix_flags(&self) -> Option<u32> {
+        match self {
+            Self::Posix(p) => Some(p.flags),
+            _ => None
+        }
+    }
 }
 
 impl FsMetadata {
@@ -347,4 +431,60 @@ impl FsMetadata {
             _ => None,
         }
     }
+
+
+    pub fn posix_perm(&self) -> Option<u16> {
+        match self {
+            Self::InodeFile(m) => m.common.osattrs.posix_perm(),
+            Self::InodeDirectory(m) => m.common.osattrs.posix_perm(),
+            Self::InodeSymlink(m) => m.common.osattrs.posix_perm(),
+            _ => None,
+        }
+    }
+
+    pub fn posix_uid(&self) -> Option<u32> {
+        match self {
+            Self::InodeFile(m) => m.common.osattrs.posix_uid(),
+            Self::InodeDirectory(m) => m.common.osattrs.posix_uid(),
+            Self::InodeSymlink(m) => m.common.osattrs.posix_uid(),
+            _ => None,
+        }
+    }
+
+    pub fn posix_gid(&self) -> Option<u32> {
+        match self {
+            Self::InodeFile(m) => m.common.osattrs.posix_gid(),
+            Self::InodeDirectory(m) => m.common.osattrs.posix_gid(),
+            Self::InodeSymlink(m) => m.common.osattrs.posix_gid(),
+            _ => None,
+        }
+    }
+
+    pub fn posix_rdev(&self) -> Option<u32> {
+        match self {
+            Self::InodeFile(m) => m.common.osattrs.posix_rdev(),
+            Self::InodeDirectory(m) => m.common.osattrs.posix_rdev(),
+            Self::InodeSymlink(m) => m.common.osattrs.posix_rdev(),
+            _ => None,
+        }
+    }
+
+    pub fn posix_flags(&self) -> Option<u32> {
+        match self {
+            Self::InodeFile(m) => m.common.osattrs.posix_flags(),
+            Self::InodeDirectory(m) => m.common.osattrs.posix_flags(),
+            Self::InodeSymlink(m) => m.common.osattrs.posix_flags(),
+            _ => None,
+        }
+    }
+
+    pub fn posix(&mut self) -> Option<&mut FsInodePosix> {
+        match self {
+            Self::InodeFile(m) => m.common.osattrs.posix(),
+            Self::InodeDirectory(m) => m.common.osattrs.posix(),
+            Self::InodeSymlink(m) => m.common.osattrs.posix(),
+            _ => None,
+        }
+    }
+
 }
