@@ -12,7 +12,6 @@ pub struct FsInodePosix {
     pub perm: u16,
     pub uid: u32,
     pub gid: u32,
-    pub rdev: u32,
     pub flags: u32,
 }
 
@@ -123,13 +122,6 @@ impl FsInodeOs {
     pub fn posix_perm(&self) -> Option<u16> {
         match self {
             Self::Posix(p) => Some(p.perm),
-            _ => None
-        }
-    }
-
-    pub fn posix_rdev(&self) -> Option<u32> {
-        match self {
-            Self::Posix(p) => Some(p.rdev),
             _ => None
         }
     }
@@ -456,15 +448,6 @@ impl FsMetadata {
             Self::InodeFile(m) => m.common.osattrs.posix_gid(),
             Self::InodeDirectory(m) => m.common.osattrs.posix_gid(),
             Self::InodeSymlink(m) => m.common.osattrs.posix_gid(),
-            _ => None,
-        }
-    }
-
-    pub fn posix_rdev(&self) -> Option<u32> {
-        match self {
-            Self::InodeFile(m) => m.common.osattrs.posix_rdev(),
-            Self::InodeDirectory(m) => m.common.osattrs.posix_rdev(),
-            Self::InodeSymlink(m) => m.common.osattrs.posix_rdev(),
             _ => None,
         }
     }

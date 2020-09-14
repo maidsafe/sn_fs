@@ -148,7 +148,6 @@ impl Filesystem for SafeFS {
                     perm: 0o744,
                     uid: getuid().as_raw() as u32,
                     gid: getuid().as_raw() as u32,
-                    rdev: 0,
                     flags: 0,
                 })
             },
@@ -197,7 +196,7 @@ impl Filesystem for SafeFS {
                 perm: meta.posix_perm().unwrap_or(0o644),
                 uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
                 gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
-                rdev: meta.posix_rdev().unwrap_or(0),
+                rdev: 0,
                 flags: meta.posix_flags().unwrap_or(0),
             };
             reply.entry(&TTL, &attr, 0);
@@ -236,7 +235,7 @@ impl Filesystem for SafeFS {
                 perm: meta.posix_perm().unwrap_or(0o644),
                 uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
                 gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
-                rdev: meta.posix_rdev().unwrap_or(0),
+                rdev: 0,
                 flags: meta.posix_flags().unwrap_or(0),
             };
 
@@ -390,7 +389,7 @@ impl Filesystem for SafeFS {
                 perm: meta.posix_perm().unwrap_or(0o644),
                 uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
                 gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
-                rdev: meta.posix_rdev().unwrap_or(0),
+                rdev: 0,
                 flags: meta.posix_flags().unwrap_or(0),
             };
 
@@ -462,7 +461,6 @@ impl Filesystem for SafeFS {
                         perm: 0o777,
                         uid: req.uid(),
                         gid: req.gid(),
-                        rdev: 0,
                         flags: 0,
                     })                    
                 },
@@ -484,7 +482,7 @@ impl Filesystem for SafeFS {
                 perm: meta.posix_perm().unwrap_or(0o644),
                 uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
                 gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
-                rdev: meta.posix_rdev().unwrap_or(0),
+                rdev: 0,
                 flags: meta.posix_flags().unwrap_or(0),
             };
 
@@ -576,7 +574,6 @@ impl Filesystem for SafeFS {
                     perm: 0o744,
                     uid: req.uid(),
                     gid: req.gid(),
-                    rdev: 0,
                     flags: 0,
                 })                
             },
@@ -600,7 +597,7 @@ impl Filesystem for SafeFS {
             perm: meta.posix_perm().unwrap_or(0o644),
             uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
             gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
-            rdev: meta.posix_rdev().unwrap_or(0),
+            rdev: 0,
             flags: meta.posix_flags().unwrap_or(0),
         };
 
@@ -700,7 +697,7 @@ impl Filesystem for SafeFS {
                 perm: meta.posix_perm().unwrap_or(0o644),
                 uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
                 gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
-                rdev: meta.posix_rdev().unwrap_or(0),
+                rdev: 0,
                 flags: meta.posix_flags().unwrap_or(0),
             };
 
@@ -816,7 +813,6 @@ impl Filesystem for SafeFS {
                     perm: 0o644,
                     uid: req.uid(),
                     gid: req.gid(),
-                    rdev: 0,
                     flags,
                 })
             },
@@ -854,7 +850,7 @@ impl Filesystem for SafeFS {
             perm: meta.posix_perm().unwrap_or(0o644),
             uid: meta.posix_uid().unwrap_or(getuid().as_raw() as u32),
             gid: meta.posix_gid().unwrap_or(getgid().as_raw() as u32),
-            rdev: meta.posix_rdev().unwrap_or(0),
+            rdev: 0,
             flags: meta.posix_flags().unwrap_or(0),
         };
 
