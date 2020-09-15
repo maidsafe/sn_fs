@@ -7,7 +7,7 @@ use time::Timespec; // unix specific.
 //        by OS:   https://en.wikipedia.org/wiki/File_attribute
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct FsInodePosix {
     pub perm: u16,
     pub uid: u32,
@@ -98,41 +98,29 @@ pub enum FsMetadata {
 
 impl FsInodeOs {
 
-    pub fn posix(&mut self) -> Option<&mut FsInodePosix> {
+    pub fn posix(&self) -> Option<&FsInodePosix> {
         match self {
             Self::Posix(p) => Some(p),
             _ => None
         }
     }
 
-    pub fn posix_uid(&self) -> Option<u32> {
+    pub fn posix_mut(&mut self) -> Option<&mut FsInodePosix> {
         match self {
-            Self::Posix(p) => Some(p.uid),
+            Self::Posix(p) => Some(p),
             _ => None
         }
     }
 
-    pub fn posix_gid(&self) -> Option<u32> {
+    #[allow(dead_code)]
+    pub fn windows(&mut self) -> Option<&mut FsInodeWindows> {
         match self {
-            Self::Posix(p) => Some(p.gid),
-            _ => None
-        }
-    }
-
-    pub fn posix_perm(&self) -> Option<u16> {
-        match self {
-            Self::Posix(p) => Some(p.perm),
-            _ => None
-        }
-    }
-
-    pub fn posix_flags(&self) -> Option<u32> {
-        match self {
-            Self::Posix(p) => Some(p.flags),
+            Self::Windows(w) => Some(w),
             _ => None
         }
     }
 }
+
 
 impl FsMetadata {
     pub fn name(&self) -> &OsStr {
@@ -295,7 +283,9 @@ impl FsMetadata {
             Self::InodeDirectory(m) => m.common.size = size,
             Self::InodeSymlink(m) => m.common.size = size,
             Self::InodeFile(m) => m.common.size = size,
-            _ => {}
+            _ => {
+                warn!("size not supported for {:?}", self);
+            }
         }
     }
 
@@ -311,7 +301,9 @@ impl FsMetadata {
             Self::InodeDirectory(m) => m.name = name.to_os_string(),
             Self::InodeSymlink(m) => m.name = name.to_os_string(),
             Self::RefFile(m) => m.name = name.to_os_string(),
-            _ => {}
+            _ => {
+                warn!("name not supported for {:?}", self);
+            }
         }
     }
 
@@ -343,7 +335,10 @@ impl FsMetadata {
                 m.common.links -= 1;
                 m.common.links
             }
-            _ => 0,
+            _ => {
+                warn!("Attempted to decrement link count on {:?}", self);
+                0
+            },
         }
     }
 
@@ -373,7 +368,10 @@ impl FsMetadata {
             Self::InodeDirectory(m) => m.common.links,
             Self::InodeSymlink(m) => m.common.links,
             Self::InodeFile(m) => m.common.links,
-            _ => 0,
+            _ => {
+                warn!("Attempted to read links on {:?}", self);
+                0
+            }
         }
     }
 
@@ -381,6 +379,7 @@ impl FsMetadata {
         let meta = match self {
             Self::InodeFile(m) => m,
             _ => {
+                warn!("Attempted to update content on {:?}", self);
                 return;
             }
         };
@@ -424,48 +423,20 @@ impl FsMetadata {
         }
     }
 
-
-    pub fn posix_perm(&self) -> Option<u16> {
-        match self {
-            Self::InodeFile(m) => m.common.osattrs.posix_perm(),
-            Self::InodeDirectory(m) => m.common.osattrs.posix_perm(),
-            Self::InodeSymlink(m) => m.common.osattrs.posix_perm(),
-            _ => None,
-        }
-    }
-
-    pub fn posix_uid(&self) -> Option<u32> {
-        match self {
-            Self::InodeFile(m) => m.common.osattrs.posix_uid(),
-            Self::InodeDirectory(m) => m.common.osattrs.posix_uid(),
-            Self::InodeSymlink(m) => m.common.osattrs.posix_uid(),
-            _ => None,
-        }
-    }
-
-    pub fn posix_gid(&self) -> Option<u32> {
-        match self {
-            Self::InodeFile(m) => m.common.osattrs.posix_gid(),
-            Self::InodeDirectory(m) => m.common.osattrs.posix_gid(),
-            Self::InodeSymlink(m) => m.common.osattrs.posix_gid(),
-            _ => None,
-        }
-    }
-
-    pub fn posix_flags(&self) -> Option<u32> {
-        match self {
-            Self::InodeFile(m) => m.common.osattrs.posix_flags(),
-            Self::InodeDirectory(m) => m.common.osattrs.posix_flags(),
-            Self::InodeSymlink(m) => m.common.osattrs.posix_flags(),
-            _ => None,
-        }
-    }
-
-    pub fn posix(&mut self) -> Option<&mut FsInodePosix> {
+    pub fn posix(&self) -> Option<&FsInodePosix> {
         match self {
             Self::InodeFile(m) => m.common.osattrs.posix(),
             Self::InodeDirectory(m) => m.common.osattrs.posix(),
             Self::InodeSymlink(m) => m.common.osattrs.posix(),
+            _ => None,
+        }
+    }
+
+    pub fn posix_mut(&mut self) -> Option<&mut FsInodePosix> {
+        match self {
+            Self::InodeFile(m) => m.common.osattrs.posix_mut(),
+            Self::InodeDirectory(m) => m.common.osattrs.posix_mut(),
+            Self::InodeSymlink(m) => m.common.osattrs.posix_mut(),
             _ => None,
         }
     }
