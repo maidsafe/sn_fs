@@ -2,7 +2,6 @@ use log::{debug, warn};
 use std::ffi::{OsStr, OsString};
 //use std::iter;
 use time::Timespec; // unix specific.
-use crate::sparse_buf::SparseBuf;
 
 // Note:  here is a useful article about FileSystem attributes
 //        by OS:   https://en.wikipedia.org/wiki/File_attribute
@@ -70,7 +69,7 @@ pub struct FsInodeSymlink {
 pub struct FsInodeFile {
     pub common: FsInodeCommon,
     // public $xorname;  for now, store data in content.
-    pub content: SparseBuf,
+    // pub content: SparseBuf,
 }
 
 // metadata for tree nodes of type file that live under forest/root (not dirs/symlinks)
@@ -373,47 +372,6 @@ impl FsMetadata {
                 warn!("Attempted to read links on {:?}", self);
                 0
             }
-        }
-    }
-
-    pub fn update_content(&mut self, new_bytes: &[u8], offset: u64) {
-        let meta = match self {
-            Self::InodeFile(m) => m,
-            _ => {
-                warn!("Attempted to update content on {:?}", self);
-                return;
-            }
-        };
-
-        let end = offset + new_bytes.len() as u64;
-        if end > meta.content.size {
-            meta.content.resize(end);
-        }
-
-        meta.content.write(offset as u64, new_bytes);
-
-        debug!(
-            "update(): len of new bytes is {}, total len is {}, offset was {}",
-            new_bytes.len(),
-            meta.content.size,
-            offset
-        );
-    }
-
-    pub fn truncate_content(&mut self, size: u64) {
-        let meta = match self {
-            Self::InodeFile(m) => m,
-            _ => {
-                return;
-            }
-        };
-        meta.content.resize(size);
-    }
-
-    pub fn content(&self) -> Option<&SparseBuf> {
-        match self {
-            Self::InodeFile(m) => Some(&m.content),
-            _ => None,
         }
     }
 

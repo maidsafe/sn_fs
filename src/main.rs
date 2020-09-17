@@ -9,14 +9,14 @@ extern crate time;
 mod fs_tree_types;
 mod metadata;
 mod tree_replica;
-mod sparse_buf;
 
 //use log::{debug, warn, error};
 use log::{debug, error};
 //use nix::unistd::{getgid, getuid};
 use std::sync::Arc;
 use std::sync::Mutex;
-use sparse_buf::SparseBuf;
+use std::fs::{File,OpenOptions};
+use std::io::{Seek, SeekFrom, Write, Read};
 
 use fuse::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
@@ -24,7 +24,7 @@ use fuse::{
 };
 use libc::{EINVAL, ENOENT, ENOTEMPTY, EEXIST};
 use std::env;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -317,7 +317,10 @@ impl Filesystem for SafeFS {
                         meta.size(),
                         new_size
                     );
-                    meta.truncate_content(new_size);
+                    // update content on disk.
+                    let path = OsString::from(format!("/tmp/sss/{}", ino));
+                    let file = OpenOptions::new().create(true).write(true).open(path).unwrap();
+                    file.set_len(new_size);
                     meta.set_size(new_size);
                 } else {
                     reply.error(EINVAL);
@@ -755,7 +758,6 @@ impl Filesystem for SafeFS {
 
         // 3. create tree node under /inodes/<x>
         let file_inode_meta = FsInodeFile {
-            content: SparseBuf::new(),
             common: FsInodeCommon {
                 size: 0,
                 ctime: Self::now(),
@@ -774,6 +776,10 @@ impl Filesystem for SafeFS {
 
         let op = self.new_opmove_new_child(&mut replica, Self::fileinodes(), meta.clone());
         let inode_id = *op.child_id();
+
+        // create file on disk.
+        let path = OsString::from(format!("/tmp/sss/{}", inode_id));
+        let mut file = OpenOptions::new().create(true).write(true).open(path).unwrap();
 
         ops.push(op);
 
@@ -835,11 +841,24 @@ impl Filesystem for SafeFS {
 
         // find tree node from inode_id
         if let Some(inode) = replica.state().tree().find(&ino) {
+
             let mut meta = inode.metadata().clone();
-            // debug!("write -- found metadata: {:?}", meta);
+
+            if !meta.is_inode_file() {
+                reply.error(EINVAL);
+                return;
+            }
+
+            debug!("write -- found metadata: {:?}", meta);
             let old_size = meta.size();
-            meta.update_content(&data, offset as u64);
-            let size = meta.content().unwrap().size as u64; // fixme: unwrap.
+
+            // update content on disk.
+            let path = OsString::from(format!("/tmp/sss/{}", ino));
+            let mut file = OpenOptions::new().create(true).write(true).open(path).unwrap();
+            file.seek(SeekFrom::Start(offset as u64));
+            file.write(data);
+
+            let size = file.metadata().unwrap().len() as u64; // fixme: unwrap.
             if size > old_size {
                 meta.set_size(size);
             }
@@ -876,11 +895,27 @@ impl Filesystem for SafeFS {
         let replica = self.replica.lock().unwrap();
 
         if let Some(inode) = replica.state().tree().find(&ino) {
-            if let Some(content) = inode.metadata().content() {
-                let data = content.read(offset as u64, size as u64);
-                reply.data(&data);
+
+            let meta = inode.metadata();
+
+            if !meta.is_inode_file() {
+                reply.error(EINVAL);
+                return;
+            }
+
+            let path = OsString::from(format!("/tmp/sss/{}", ino));
+            let mut file = File::open(path).unwrap();
+            file.seek(SeekFrom::Start(offset as u64));
+
+            let mut buf = vec![0; size as usize];
+            let result = file.read(&mut buf);
+
+            // debug!("read -- read bytes: {:?}, result: {:?}", buf, result);
+
+            if let Ok(_bytes_read) = result {
+                reply.data(&buf);
             } else {
-                error!("read -- content not found in metadata");
+                error!("read -- content not found");
                 reply.error(ENOENT);
             }
         } else {
