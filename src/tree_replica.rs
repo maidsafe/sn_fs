@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use log::debug;
 
 use crate::fs_tree_types::{ActorType, FsClock, FsOpMove, FsState};
 
@@ -40,7 +41,11 @@ impl TreeReplica {
             Some(latest) if op.timestamp() > latest => {
                 self.latest_time_by_replica
                     .insert(actor_id, op.timestamp().clone());
-            }
+            },
+            None => {
+                self.latest_time_by_replica
+                    .insert(actor_id, op.timestamp().clone());
+            },
             _ => {}
         }
 
@@ -56,6 +61,7 @@ impl TreeReplica {
 
     #[allow(dead_code)]
     pub fn causally_stable_threshold(&self) -> Option<&FsClock> {
+        debug!("latest_time_by_replica: {:?}", self.latest_time_by_replica);
         // The minimum of latest timestamp from each replica
         // is the causally stable threshold.
         let mut oldest: Option<&FsClock> = None;
@@ -77,6 +83,7 @@ impl TreeReplica {
     pub fn truncate_log(&mut self) -> bool {
         if let Some(t) = self.causally_stable_threshold() {
             let tt = t.clone();
+            debug!("truncating log before {:?}", tt);
             self.state.truncate_log_before(&tt)
         } else {
             false

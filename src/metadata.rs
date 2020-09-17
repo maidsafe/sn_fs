@@ -1,7 +1,8 @@
 use log::{debug, warn};
 use std::ffi::{OsStr, OsString};
-use std::iter;
+//use std::iter;
 use time::Timespec; // unix specific.
+use crate::sparse_buf::SparseBuf;
 
 // Note:  here is a useful article about FileSystem attributes
 //        by OS:   https://en.wikipedia.org/wiki/File_attribute
@@ -69,7 +70,7 @@ pub struct FsInodeSymlink {
 pub struct FsInodeFile {
     pub common: FsInodeCommon,
     // public $xorname;  for now, store data in content.
-    pub content: Vec<u8>,
+    pub content: SparseBuf,
 }
 
 // metadata for tree nodes of type file that live under forest/root (not dirs/symlinks)
@@ -375,7 +376,7 @@ impl FsMetadata {
         }
     }
 
-    pub fn update_content(&mut self, new_bytes: &[u8], offset: i64) {
+    pub fn update_content(&mut self, new_bytes: &[u8], offset: u64) {
         let meta = match self {
             Self::InodeFile(m) => m,
             _ => {
@@ -384,24 +385,17 @@ impl FsMetadata {
             }
         };
 
-        let offset: usize = offset as usize;
-
-        if offset >= meta.content.len() {
-            // extend with zeroes until we are at least at offset
-            meta.content
-                .extend(iter::repeat(0).take(offset - meta.content.len()));
+        let end = offset + new_bytes.len() as u64;
+        if end > meta.content.size {
+            meta.content.resize(end);
         }
 
-        if offset + new_bytes.len() > meta.content.len() {
-            meta.content.splice(offset.., new_bytes.iter().cloned());
-        } else {
-            meta.content
-                .splice(offset..offset + new_bytes.len(), new_bytes.iter().cloned());
-        }
+        meta.content.write(offset as u64, new_bytes);
+
         debug!(
             "update(): len of new bytes is {}, total len is {}, offset was {}",
             new_bytes.len(),
-            meta.content.len(),
+            meta.content.size,
             offset
         );
     }
@@ -413,10 +407,10 @@ impl FsMetadata {
                 return;
             }
         };
-        meta.content.truncate(size as usize);
+        meta.content.resize(size);
     }
 
-    pub fn content(&self) -> Option<&Vec<u8>> {
+    pub fn content(&self) -> Option<&SparseBuf> {
         match self {
             Self::InodeFile(m) => Some(&m.content),
             _ => None,
