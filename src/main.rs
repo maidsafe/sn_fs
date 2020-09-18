@@ -15,8 +15,9 @@ use log::{debug, error};
 //use nix::unistd::{getgid, getuid};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::fs::{File,OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write, Read};
+use openat::{Dir, SimpleType};
 
 use fuse::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
@@ -40,6 +41,7 @@ const TTL: Timespec = Timespec { sec: 1, nsec: 0 }; // 1 second
 
 struct SafeFS {
     replica: Arc<Mutex<TreeReplica>>,
+    mountpoint: Dir,
 }
 
 struct InoMerge;
@@ -62,11 +64,13 @@ impl SafeFS {
     const ROOT: u64 = 1;
     const FILEINODES: u64 = 2;
     const TRASH: u64 = 3;
+    const INO_FILE_PERM: u32 = 0o600;
 
     #[inline]
-    fn new() -> Self {
+    fn new(mountpoint: Dir) -> Self {
         Self {
             replica: Arc::new(Mutex::new(TreeReplica::new())),
+            mountpoint,
         }
     }
 
@@ -189,6 +193,14 @@ impl Filesystem for SafeFS {
 
         // self.replica = TreeReplica::new();
         Ok(())
+    }
+
+    fn destroy(&mut self, _req: &Request) {
+        println!("destroy called");
+
+        // note: destroy doesn't seem to get called.
+        // filed issue: https://github.com/zargony/fuse-rs/issues/151
+        // for now, moved code into main().
     }
 
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
@@ -318,8 +330,7 @@ impl Filesystem for SafeFS {
                         new_size
                     );
                     // update content on disk.
-                    let path = OsString::from(format!("/tmp/sss/{}", ino));
-                    let file = OpenOptions::new().create(true).write(true).open(path).unwrap();
+                    let file = self.mountpoint.update_file(&ino.to_string(), Self::INO_FILE_PERM).unwrap();
                     file.set_len(new_size);
                     meta.set_size(new_size);
                 } else {
@@ -778,8 +789,7 @@ impl Filesystem for SafeFS {
         let inode_id = *op.child_id();
 
         // create file on disk.
-        let path = OsString::from(format!("/tmp/sss/{}", inode_id));
-        let mut file = OpenOptions::new().create(true).write(true).open(path).unwrap();
+        let file = self.mountpoint.write_file(&inode_id.to_string(), Self::INO_FILE_PERM).unwrap();
 
         ops.push(op);
 
@@ -853,8 +863,7 @@ impl Filesystem for SafeFS {
             let old_size = meta.size();
 
             // update content on disk.
-            let path = OsString::from(format!("/tmp/sss/{}", ino));
-            let mut file = OpenOptions::new().create(true).write(true).open(path).unwrap();
+            let mut file = self.mountpoint.update_file(&ino.to_string(), Self::INO_FILE_PERM).unwrap();
             file.seek(SeekFrom::Start(offset as u64));
             file.write(data);
 
@@ -903,8 +912,7 @@ impl Filesystem for SafeFS {
                 return;
             }
 
-            let path = OsString::from(format!("/tmp/sss/{}", ino));
-            let mut file = File::open(path).unwrap();
+            let mut file = self.mountpoint.open_file(&ino.to_string()).unwrap();
             file.seek(SeekFrom::Start(offset as u64));
 
             let mut buf = vec![0; size as usize];
@@ -930,6 +938,8 @@ fn main() {
         .default_format_timestamp_nanos(true)
         .init();
     let mountpoint = env::args_os().nth(1).unwrap();
+    let mountpoint_fd = Dir::open(Path::new(&mountpoint)).unwrap();
+
     // Notes: 
     //  1. todo: these options should come from command line.
     //  2. allow_other enables other users to read/write.  Required for testing chown.
@@ -939,5 +949,19 @@ fn main() {
         .iter()
         .map(|o| o.as_ref())
         .collect::<Vec<&OsStr>>();
-    fuse::mount(SafeFS::new(), &mountpoint, &options).unwrap();
+    fuse::mount(SafeFS::new(mountpoint_fd), &mountpoint, &options).unwrap();
+
+    // Delete all files (each file representing content of 1 inode) under mount point.
+    // this code should be in SafeFS::destroy(), but its not getting called.
+    // Seems like a fuse bug/issue.
+    let mountpoint_fd = Dir::open(Path::new(&mountpoint)).unwrap();
+    if let Ok(entries) = mountpoint_fd.list_dir(".") {
+        for result in entries {
+            if let Ok(entry) = result {
+                if entry.simple_type() == Some(SimpleType::File) {
+                    mountpoint_fd.remove_file(Path::new(entry.file_name()));
+                }
+            }
+        }
+    }
 }
