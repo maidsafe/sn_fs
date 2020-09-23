@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use log::debug;
+use std::collections::HashMap;
 
 use crate::fs_tree_types::{ActorType, FsClock, FsOpMove, FsState};
 
@@ -41,11 +41,11 @@ impl TreeReplica {
             Some(latest) if op.timestamp() > latest => {
                 self.latest_time_by_replica
                     .insert(actor_id, op.timestamp().clone());
-            },
+            }
             None => {
                 self.latest_time_by_replica
                     .insert(actor_id, op.timestamp().clone());
-            },
+            }
             _ => {}
         }
 

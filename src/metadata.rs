@@ -1,11 +1,10 @@
-use log::{debug, warn};
+use log::warn;
 use std::ffi::{OsStr, OsString};
 //use std::iter;
 use time::Timespec; // unix specific.
 
 // Note:  here is a useful article about FileSystem attributes
 //        by OS:   https://en.wikipedia.org/wiki/File_attribute
-
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FsInodePosix {
@@ -37,7 +36,7 @@ pub enum FsInodeOs {
     #[allow(dead_code)]
     Windows(FsInodeWindows),
     #[allow(dead_code)]
-    Empty,                // no OS specific attrs.
+    Empty, // no OS specific attrs.
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,18 +96,17 @@ pub enum FsMetadata {
 }
 
 impl FsInodeOs {
-
     pub fn posix(&self) -> Option<&FsInodePosix> {
         match self {
             Self::Posix(p) => Some(p),
-            _ => None
+            _ => None,
         }
     }
 
     pub fn posix_mut(&mut self) -> Option<&mut FsInodePosix> {
         match self {
             Self::Posix(p) => Some(p),
-            _ => None
+            _ => None,
         }
     }
 
@@ -116,11 +114,10 @@ impl FsInodeOs {
     pub fn windows(&mut self) -> Option<&mut FsInodeWindows> {
         match self {
             Self::Windows(w) => Some(w),
-            _ => None
+            _ => None,
         }
     }
 }
-
 
 impl FsMetadata {
     pub fn name(&self) -> &OsStr {
@@ -318,7 +315,7 @@ impl FsMetadata {
     pub fn set_symlink(&mut self, link: &OsStr) {
         if let Self::InodeSymlink(m) = self {
             m.symlink = link.to_os_string();
-        }        
+        }
     }
 
     pub fn links_dec(&mut self) -> u32 {
@@ -338,7 +335,7 @@ impl FsMetadata {
             _ => {
                 warn!("Attempted to decrement link count on {:?}", self);
                 0
-            },
+            }
         }
     }
 
@@ -392,5 +389,4 @@ impl FsMetadata {
             _ => None,
         }
     }
-
 }
