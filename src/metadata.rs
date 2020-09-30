@@ -6,6 +6,7 @@ use time::Timespec; // unix specific.
 // Note:  here is a useful article about FileSystem attributes
 //        by OS:   https://en.wikipedia.org/wiki/File_attribute
 
+/// Represents Inode attributes that are Posix specific.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FsInodePosix {
     pub perm: u16,
@@ -14,6 +15,7 @@ pub struct FsInodePosix {
     pub flags: u32,
 }
 
+/// Represents Inode attributes that are Windows specific.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeWindows {
     pub archive: bool,
@@ -30,6 +32,11 @@ pub struct FsInodeWindows {
     pub temporary: bool,
 }
 
+/// An enum for storing OS specific attributes, if any.
+/// For example:
+///  a file created on Linux, BSD or Mac would have Posix attributes.
+///  a file created on Windows would have Windows attributes
+///  a file created directly on the Safe network (eg via API) would not have any OS attributes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FsInodeOs {
     Posix(FsInodePosix),
@@ -39,6 +46,7 @@ pub enum FsInodeOs {
     Empty, // no OS specific attrs.
 }
 
+/// inode attributes that are common to symlinks, files, directories.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeCommon {
     pub size: u64,
@@ -49,13 +57,14 @@ pub struct FsInodeCommon {
     pub osattrs: FsInodeOs,
 }
 
-// metadata for tree nodes of type dir/symlink that live under forest/root (not files)
+/// inode attributes for Directories
 #[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeDirectory {
     pub common: FsInodeCommon,
     pub name: OsString,
 }
 
+/// inode attributes for Symlinks
 #[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeSymlink {
     pub common: FsInodeCommon,
@@ -63,22 +72,22 @@ pub struct FsInodeSymlink {
     pub symlink: OsString,
 }
 
-// metadata for tree nodes of type fileinode -- live under forest/fileinodes
+/// inode attributes for Files
 #[derive(Debug, Clone, PartialEq)]
 pub struct FsInodeFile {
     pub common: FsInodeCommon,
-    // public $xorname;  for now, store data in content.
+    // public xorname;   In the future, we expect to store file content in SafeNetwork, referenced by XorName.
     // pub content: SparseBuf,
 }
 
-// metadata for tree nodes of type file that live under forest/root (not dirs/symlinks)
+/// inode attributes for File References.   (hard links)
 #[derive(Debug, Clone, PartialEq)]
 pub struct FsRefFile {
     pub name: OsString,
-    pub inode_id: u64, // for looking up FsInodeMeta under /inodes
+    pub inode_id: u64, // for looking up FsInodeFile under /inodefiles
 }
 
-// enum possible kinds of inode.
+/// enum possible kinds of inode visible to FUSE/OS.
 #[derive(Debug, Clone, Copy)]
 pub enum DirentKind {
     File,
@@ -86,6 +95,8 @@ pub enum DirentKind {
     Symlink,
 }
 
+/// enum possible kinds of metadata that can be stored in a TreeNode.
+/// In pther words, each node in the tree stores metadata of type FsMetadata.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FsMetadata {
     InodeDirectory(FsInodeDirectory),

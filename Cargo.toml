@@ -1,5 +1,5 @@
 [package]
-name = "safe_fs"
+name = "sn_fs"
 version = "0.1.0"
 authors = ["MaidSafe Developers <dev@maidsafe.net>"]
 edition = "2018"

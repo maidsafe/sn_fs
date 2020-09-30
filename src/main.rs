@@ -10,6 +10,16 @@ extern crate time;
 /// The plan is to make it into a network filesystem
 /// utilizing the CRDT properties to ensure that replicas
 /// sync/converge correctly.
+///
+/// In this implementation the contents of each file are stored in
+/// a corresponding file in the underlying filesystem whose name
+/// is the inode identifier.  These inode content files are
+/// all located in the mountpoint directory and are deleted when
+/// sn_fs is unmounted.  Thus, they are never directly visible
+/// to other processes.
+///
+/// In a networked implementation, the above mechanism could be used
+/// as a method to implement a local cache.
 // Note: see for helpful description of inode fields and when/how to update them.
 // https://man7.org/linux/man-pages/man7/inode.7.html
 mod fs_tree_types;
@@ -43,13 +53,15 @@ use tree_replica::TreeReplica;
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 }; // 1 second
 
-struct SafeFS {
+struct SnFs {
     replica: Arc<Mutex<TreeReplica>>,
     mountpoint: Dir,
 }
 
 struct InoMerge;
 
+/// Routines for merging 16 bit replica identifier with 48 bit inode id
+/// into a single 64 bit integer.  (ino)
 impl InoMerge {
     pub fn combine(a: u64, b: u64) -> u64 {
         a << 48 | b
@@ -64,12 +76,13 @@ impl InoMerge {
 }
 
 /// Some filesystem utility/helper methods.
-impl SafeFS {
-    const FOREST: u64 = 0;
-    const ROOT: u64 = 1;
-    const FILEINODES: u64 = 2;
-    const TRASH: u64 = 3;
-    const INO_FILE_PERM: u32 = 0o600;
+impl SnFs {
+    const FOREST: u64 = 0; // top-most node.  NOT in the tree.
+    const ROOT: u64 = 1; // root of filesystem
+    const FILEINODES: u64 = 2; // holds fileinodes
+    const TRASH: u64 = 3; // holds deleted inodes
+
+    const INO_FILE_PERM: u32 = 0o600; // permissions for on-disk file-contents.
 
     #[inline]
     fn new(mountpoint: Dir) -> Self {
@@ -130,6 +143,7 @@ impl SafeFS {
         None
     }
 
+    /// generate move operation that creates a new child node.
     fn new_opmove_new_child(
         &self,
         replica: &mut TreeReplica,
@@ -142,6 +156,7 @@ impl SafeFS {
         FsOpMove::new(ts, parent, metadata, child)
     }
 
+    /// generate move operation that moves an existing node.
     #[inline]
     fn new_opmove(
         &self,
@@ -158,6 +173,7 @@ impl SafeFS {
         time::now().to_timespec()
     }
 
+    // Verify that a given node in the tree is a directory, according to its inode metadata.
     #[inline]
     fn verify_directory<'r>(
         &self,
@@ -170,6 +186,7 @@ impl SafeFS {
         }
     }
 
+    // Create a FileAttr from ino, FileType, and FsMetadata
     fn mk_file_attr(ino: u64, kind: FileType, meta: &FsMetadata) -> FileAttr {
         let d = FsInodePosix::default();
         let posix = meta.posix().unwrap_or(&d);
@@ -194,10 +211,12 @@ impl SafeFS {
 }
 
 /// Here we implement the Fuse FileSystem trait/api.
-impl Filesystem for SafeFS {
+impl Filesystem for SnFs {
+    /// Initialize filesystem. Called before any other filesystem method.
     fn init(&mut self, req: &Request) -> Result<(), c_int> {
         let mut replica = self.replica.lock().unwrap();
 
+        // Create metadata for root directory tree node
         let meta = FsMetadata::InodeDirectory(FsInodeDirectory {
             name: OsStr::new("root").to_os_string(),
             common: FsInodeCommon {
@@ -214,12 +233,14 @@ impl Filesystem for SafeFS {
                 }),
             },
         });
+        // create and apply move operation for root node with parent forest.
         let op = self.new_opmove(&mut replica, Self::forest(), meta, Self::root());
         replica.apply_op(op);
 
         Ok(())
     }
 
+    /// Clean up filesystem. Called on filesystem exit.
     fn destroy(&mut self, _req: &Request) {
         println!("destroy called");
 
@@ -228,11 +249,14 @@ impl Filesystem for SafeFS {
         // for now, moved code into main().
     }
 
+    /// Look up a directory entry by name and get its attributes.
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         debug!("lookup -- parent: {},  name: {:?}", parent, name);
         let replica = self.replica.lock().unwrap();
 
+        // Find tree node under parent matching name.
         if let Some((child, node)) = self.child_by_name(&replica, parent, name) {
+            // Determine/validate the type of FS inode.
             let kind: FileType = match node.metadata() {
                 FsMetadata::InodeDirectory(_) => FileType::Directory,
                 FsMetadata::InodeSymlink(_) => FileType::Symlink,
@@ -246,6 +270,8 @@ impl Filesystem for SafeFS {
             let mut ino = child;
             let mut meta = node.metadata();
 
+            // if inode_id() is_some() then this is a RefFile and we need to
+            // dereference it to find the real File Inode.
             if let Some(inode_id) = node.metadata().inode_id() {
                 if let Some(inode) = replica.state().tree().find(&inode_id) {
                     ino = inode_id;
@@ -253,19 +279,26 @@ impl Filesystem for SafeFS {
                 }
             }
 
+            // Generate FileAttr and reply
             let attr = Self::mk_file_attr(ino, kind, &meta);
             reply.entry(&TTL, &attr, 0);
         } else {
             reply.error(ENOENT);
         }
-        // note:  we do not increment lookup count.
+        // note:  we do not increment lookup count.  It is optional.
     }
 
+    /// Get file attributes.
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         debug!("getattr -- ino: {}", ino);
         let replica = self.replica.lock().unwrap();
 
+        // Find node in tree
         if let Some(node) = replica.state().tree().find(&ino) {
+            // Determine/validate the type of FS inode.
+            // Fixme: should distinguish between FsMetadata::RefFile and FsMetadata::InodeFile.
+            //        as lookup() does.  We seem to get away without it because lookup already
+            //        returns the InodeFile ino, so we are passed it here.
             let kind: FileType = match node.metadata().dirent_kind() {
                 Some(DirentKind::Directory) => FileType::Directory,
                 Some(DirentKind::File) => FileType::RegularFile,
@@ -284,6 +317,7 @@ impl Filesystem for SafeFS {
         }
     }
 
+    /// Set file attributes.
     fn setattr(
         &mut self,
         _req: &Request,
@@ -307,7 +341,10 @@ impl Filesystem for SafeFS {
         );
         let mut replica = self.replica.lock().unwrap();
 
+        // Find node in tree
         if let Some(node) = replica.state().tree().find(&ino) {
+            // Determine/validate the type of FS inode.
+            // fixme comment in getattr() applies here also.
             let kind: FileType = match node.metadata().dirent_kind() {
                 Some(DirentKind::Directory) => FileType::Directory,
                 Some(DirentKind::File) => FileType::RegularFile,
@@ -324,6 +361,7 @@ impl Filesystem for SafeFS {
             // Now we go through each parameter and check for any
             // updates.
 
+            // mtime
             if let Some(new_mtime) = mtime {
                 debug!(
                     "setattr -- old_mtime={:?}, new_mtime={:?})",
@@ -332,6 +370,7 @@ impl Filesystem for SafeFS {
                 );
                 meta.set_mtime(new_mtime);
             }
+            // crtime
             if let Some(new_crtime) = crtime {
                 debug!(
                     "setattr -- old_crtime={:?}, new_crtime={:?})",
@@ -340,6 +379,7 @@ impl Filesystem for SafeFS {
                 );
                 meta.set_crtime(new_crtime);
             }
+            // ctime
             if let Some(new_ctime) = ctime {
                 debug!(
                     "setattr -- old_ctime={:?}, new_ctime={:?})",
@@ -349,6 +389,7 @@ impl Filesystem for SafeFS {
                 meta.set_ctime(new_ctime);
             }
 
+            // size
             if let Some(new_size) = size {
                 if kind == FileType::RegularFile {
                     debug!(
@@ -378,6 +419,7 @@ impl Filesystem for SafeFS {
                 }
             }
 
+            // uid
             if let Some(new_uid) = uid {
                 debug!("setattr -- old_uid={:?}, new_uid={:?})", posix.uid, new_uid);
                 if let Some(p) = meta.posix_mut() {
@@ -388,6 +430,7 @@ impl Filesystem for SafeFS {
                 }
             }
 
+            // gid
             if let Some(new_gid) = gid {
                 debug!("setattr -- old_gid={:?}, new_gid={:?})", posix.gid, new_gid);
                 if let Some(p) = meta.posix_mut() {
@@ -398,6 +441,7 @@ impl Filesystem for SafeFS {
                 }
             }
 
+            // perm
             if let Some(new_perm) = mode {
                 debug!(
                     "setattr -- old_perm={:?}, new_perm={:?})",
@@ -411,6 +455,7 @@ impl Filesystem for SafeFS {
                 }
             }
 
+            // flags
             if let Some(new_flags) = flags {
                 debug!(
                     "setattr -- old_flags={:?}, new_flags={:?})",
@@ -424,6 +469,7 @@ impl Filesystem for SafeFS {
                 }
             }
 
+            // create FileAttr for reply
             let attr = Self::mk_file_attr(ino, kind, &meta);
 
             // If metadata changed, we need to generate a Move op.
@@ -439,6 +485,7 @@ impl Filesystem for SafeFS {
         }
     }
 
+    /// Remove a directory.
     fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
         debug!("rmdir -- parent: {}, name: {:?}", parent, name);
         let mut replica = self.replica.lock().unwrap();
@@ -468,6 +515,7 @@ impl Filesystem for SafeFS {
         }
     }
 
+    /// Create a symbolic link.
     fn symlink(
         &mut self,
         req: &Request,
@@ -484,10 +532,12 @@ impl Filesystem for SafeFS {
         );
         let mut replica = self.replica.lock().unwrap();
 
+        // find parent node
         if let Some(_node) = replica.state().tree().find(&parent) {
             // note: we do not need to check if name entry already exists
             //       because fuse does it and doesn't call symlink in that case.
 
+            // create node metadata for new symlink
             let meta = FsMetadata::InodeSymlink(FsInodeSymlink {
                 name: name.to_os_string(),
                 symlink: link.as_os_str().to_os_string(),
@@ -506,11 +556,13 @@ impl Filesystem for SafeFS {
                 },
             });
 
+            // create new child node for symlink, generate move op, and apply it.
             let op = self.new_opmove_new_child(&mut replica, parent, meta.clone());
             let ino = *op.child_id();
 
             replica.apply_op(op);
 
+            // generate FileAttr and reply with it.
             let attr = Self::mk_file_attr(ino, FileType::Symlink, &meta);
             reply.entry(&TTL, &attr, 1);
         } else {
@@ -518,6 +570,7 @@ impl Filesystem for SafeFS {
         }
     }
 
+    /// Read symbolic link.
     fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
         debug!("readlink -- ino: {}", ino);
         let replica = self.replica.lock().unwrap();
@@ -539,6 +592,7 @@ impl Filesystem for SafeFS {
         }
     }
 
+    /// Rename a file.
     fn rename(
         &mut self,
         _req: &Request,
@@ -554,7 +608,8 @@ impl Filesystem for SafeFS {
         );
         let mut replica = self.replica.lock().unwrap();
 
-        let mut ops: Vec<FsOpMove> = Vec::new();
+        // we may require two ops, so we make a list.
+        let mut ops: Vec<FsOpMove> = Vec::with_capacity(2);
 
         // find child of parent that matches $name
         if let Some((child, node)) = self.child_by_name(&replica, parent, name) {
@@ -578,6 +633,7 @@ impl Filesystem for SafeFS {
         }
     }
 
+    /// Create a directory.
     fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32, reply: ReplyEntry) {
         debug!(
             "mkdir -- parent: {}, name: {:?}, mode: {}",
@@ -610,11 +666,13 @@ impl Filesystem for SafeFS {
             },
         });
 
+        // create child node, generate move op, and apply.
         let op = self.new_opmove_new_child(&mut replica, parent, meta.clone());
         let ino = *op.child_id();
 
         replica.apply_op(op);
 
+        // generate FileAttr and reply with it.
         let attr = Self::mk_file_attr(ino, FileType::Directory, &meta);
         reply.entry(&TTL, &attr, 1);
 
@@ -624,6 +682,10 @@ impl Filesystem for SafeFS {
         );
     }
 
+    /// Read directory. Send a buffer filled using buffer.fill(), with size not exceeding
+    /// the requested size. Send an empty buffer on end of stream. fh will contain the
+    /// value set by the opendir method, or will be undefined if the opendir method didn't
+    /// set any value.
     fn readdir(
         &mut self,
         _req: &Request,
@@ -636,7 +698,6 @@ impl Filesystem for SafeFS {
         let replica = self.replica.lock().unwrap();
 
         // find children after offset.
-        // let to_skip = if offset == 0 { offset } else { offset + 1 } as usize;
         let children = replica.state().tree().children(&ino);
         for (i, child_ino) in children.iter().enumerate().skip(offset as usize) {
             if let Some(node) = replica.state().tree().find(child_ino) {
@@ -644,6 +705,7 @@ impl Filesystem for SafeFS {
 
                 debug!("meta: {:#?}, k: {:?}", node.metadata(), k);
 
+                // determine filetype of child and validate.
                 let filetype: FileType = match k {
                     Some(DirentKind::Directory) => FileType::Directory,
                     Some(DirentKind::File) => FileType::RegularFile,
@@ -675,6 +737,7 @@ impl Filesystem for SafeFS {
         debug!("leaving readdir.  ino: {}, offset: {}", ino, offset);
     }
 
+    /// Create a hard link.
     fn link(
         &mut self,
         _req: &Request,
@@ -695,14 +758,16 @@ impl Filesystem for SafeFS {
             return;
         }
 
-        let mut ops: Vec<FsOpMove> = Vec::new();
-
         if let Some(node) = replica.state().tree().find(&ino) {
+            // We will have two ops.
+            let mut ops: Vec<FsOpMove> = Vec::with_capacity(2);
+
             let mut meta = node.metadata().clone();
             meta.links_inc();
 
             let attr = Self::mk_file_attr(ino, FileType::RegularFile, &meta);
 
+            // generate op that increments link count in InodeFile
             let parent_id = *node.parent_id();
             ops.push(self.new_opmove(&mut replica, parent_id, meta, ino));
 
@@ -711,11 +776,12 @@ impl Filesystem for SafeFS {
                 inode_id: ino,
             };
 
+            // generate op that creates a new RefFile (hard link) to existing InodeFile
             let meta_ref = FsMetadata::RefFile(file_ref_meta);
             let op_ref = self.new_opmove_new_child(&mut replica, newparent, meta_ref);
-            // let _ref_id = *op_ref.child_id();
             ops.push(op_ref);
 
+            // apply both ops
             replica.apply_ops(&ops);
 
             reply.entry(&TTL, &attr, 0);
@@ -724,12 +790,15 @@ impl Filesystem for SafeFS {
         }
     }
 
+    /// Remove a file.
     fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
         debug!("unlink -- parent: {}, name: {:?}", parent, name);
         let mut replica = self.replica.lock().unwrap();
 
+        // lookup child by name
         if let Some((child, node)) = self.child_by_name(&replica, parent, name) {
-            let mut ops: Vec<FsOpMove> = Vec::new();
+            // we may need 0, 1 or 2 ops.
+            let mut ops: Vec<FsOpMove> = Vec::with_capacity(2);
 
             match node.metadata() {
                 FsMetadata::InodeSymlink(_) => {
@@ -750,7 +819,7 @@ impl Filesystem for SafeFS {
                         child,
                     ));
 
-                    // lookup the inode.
+                    // lookup the inode. (dereference RefFile hard link)
                     if let Some(inode) = replica.state().tree().find(&inode_id) {
                         let mut meta = inode.metadata().clone();
                         meta.set_ctime(Self::now());
@@ -776,6 +845,7 @@ impl Filesystem for SafeFS {
                 }
             }
 
+            // apply ops.
             replica.apply_ops(&ops);
             reply.ok();
         } else {
@@ -783,6 +853,14 @@ impl Filesystem for SafeFS {
         }
     }
 
+    /// Create and open a file. If the file does not exist, first create it with the specified mode,
+    /// and then open it. Open flags (with the exception of O_NOCTTY) are available in flags.
+    /// Filesystem may store an arbitrary file handle (pointer, index, etc) in fh, and use
+    /// this in other all other file operations (read, write, flush, release, fsync). There
+    /// are also some flags (direct_io, keep_cache) which the filesystem may set, to change
+    /// the way the file is opened. See fuse_file_info structure in for more details. If this
+    /// method is not implemented or under Linux kernel versions earlier than 2.6.15, the
+    /// mknod() and open() methods will be called instead.
     fn create(
         &mut self,
         req: &Request,
@@ -812,9 +890,10 @@ impl Filesystem for SafeFS {
             return;
         }
 
-        let mut ops: Vec<FsOpMove> = Vec::new();
+        // we will use two ops.
+        let mut ops: Vec<FsOpMove> = Vec::with_capacity(2);
 
-        // 3. create tree node under /inodes/<x>
+        // create tree node under /inodes/<x>
         let file_inode_meta = FsInodeFile {
             common: FsInodeCommon {
                 size: 0,
@@ -847,17 +926,19 @@ impl Filesystem for SafeFS {
 
         ops.push(op);
 
-        // 5. create tree entry under /root/../parent_id
+        // create tree entry under /root/../parent_id
         let file_ref_meta = FsRefFile {
             name: name.to_os_string(),
             inode_id,
         };
 
+        // Here we create the RefFile hard link to the InodeFile created above.
         let meta_ref = FsMetadata::RefFile(file_ref_meta);
         let op_ref = self.new_opmove_new_child(&mut replica, parent, meta_ref);
         let ref_id = *op_ref.child_id();
         ops.push(op_ref);
 
+        // apply operations.
         replica.apply_ops(&ops);
 
         debug!(
@@ -865,16 +946,33 @@ impl Filesystem for SafeFS {
             ref_id, inode_id, name
         );
 
+        // generate FileAttr and reply.
         let attr = Self::mk_file_attr(inode_id, FileType::RegularFile, &meta);
         reply.created(&TTL, &attr, 1, 0 as u64, 0 as u32);
     }
 
+    /// Flush method. This is called on each close() of the opened file. Since file descriptors
+    /// can be duplicated (dup, dup2, fork), for one open call there may be many flush calls.
+    /// Filesystems shouldn't assume that flush will always be called after some writes, or
+    /// that if will be called at all. fh will contain the value set by the open method, or
+    /// will be undefined if the open method didn't set any value. NOTE: the name of the method
+    /// is misleading, since (unlike fsync) the filesystem is not forced to flush pending writes.
+    /// One reason to flush data, is if the filesystem wants to return write errors. If the
+    /// filesystem supports file locking operations (setlk, getlk) it should remove all locks
+    /// belonging to 'lock_owner'.
     fn flush(&mut self, _req: &Request, _ino: u64, _fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         //edebug!("Filesystem::flush(ino={}, fh={})", ino, fh);
 
+        // Presently we are stateless, so we don't implement this.
         reply.ok();
     }
 
+    /// Release an open file. Release is called when there are no more references to an open file:
+    /// all file descriptors are closed and all memory mappings are unmapped. For every open call
+    /// there will be exactly one release call. The filesystem may reply with an error, but error
+    /// values are not returned to close() or munmap() which triggered the release. fh will contain
+    /// the value set by the open method, or will be undefined if the open method didn't set any
+    /// value. flags will contain the same flags as for open.
     fn release(
         &mut self,
         _req: &Request,
@@ -887,9 +985,27 @@ impl Filesystem for SafeFS {
     ) {
         debug!("release -- ino={}, fh={}, flush={}", ino, fh, flush);
 
+        // Presently we are stateless, so we don't implement this.
         reply.ok();
     }
 
+    /// Write data. Write should return exactly the number of bytes requested except on error.
+    /// An exception to this is when the file has been opened in 'direct_io' mode, in which
+    /// case the return value of the write system call will reflect the return value of this
+    /// operation. fh will contain the value set by the open method, or will be undefined if
+    /// the open method didn't set any value.
+    ///
+    /// Our approach here is to open (or create) a file in the underlying filesystem
+    /// beneath the mountpoint directory.  The ino's string representation is used as
+    /// the file's name.  We then resize the file as needed, and seek to appropriate
+    /// position for writing.
+    ///
+    /// This impl is relatively simple and easy because it is stateless. The file is re-opened
+    /// and closed for each call to write() or read().
+    ///
+    /// TODO: An improvement would be to actually create the on-disk file in create() or open()
+    /// it in open and pass the filehandle around, so that write() and read() do not need to open
+    /// and close.  This should be considerably faster.
     fn write(
         &mut self,
         _req: &Request,
@@ -910,6 +1026,7 @@ impl Filesystem for SafeFS {
         if let Some(inode) = replica.state().tree().find(&ino) {
             let mut meta = inode.metadata().clone();
 
+            // verify we are an InodeFile
             if !meta.is_inode_file() {
                 reply.error(EINVAL);
                 return;
@@ -918,11 +1035,18 @@ impl Filesystem for SafeFS {
             debug!("write -- found metadata: {:?}", meta);
             let old_size = meta.size();
 
-            // update content on disk.
-            let mut file = self
+            // open "real" file on disk for update (or create)
+            let mut file = match self
                 .mountpoint
                 .update_file(&ino.to_string(), Self::INO_FILE_PERM)
-                .unwrap();
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("write -- can't open passthrough file {}: {:?}", ino, e);
+                    reply.error(EINVAL);
+                    return;
+                }
+            };
             if file.seek(SeekFrom::Start(offset as u64)).is_err() || file.write(data).is_err() {
                 reply.error(EINVAL);
                 return;
@@ -935,6 +1059,7 @@ impl Filesystem for SafeFS {
                     return;
                 }
             };
+            // increase filesize if necessary.
             if size > old_size {
                 meta.set_size(size);
             }
@@ -953,11 +1078,35 @@ impl Filesystem for SafeFS {
         }
     }
 
+    /// Open a file. Open flags (with the exception of O_CREAT, O_EXCL, O_NOCTTY and O_TRUNC)
+    /// are available in flags. Filesystem may store an arbitrary file handle (pointer, index, etc)
+    /// in fh, and use this in other all other file operations (read, write, flush, release, fsync).
+    /// Filesystem may also implement stateless file I/O and not store anything in fh. There are
+    /// also some flags (direct_io, keep_cache) which the filesystem may set, to change the way
+    /// the file is opened. See fuse_file_info structure in for more details.
     fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
         debug!("open -- ino={}, flags={}", ino, flags);
+
+        // Presently we are stateless, so we don't implement this.
         reply.opened(0, 0);
     }
 
+    /// Read data. Read should send exactly the number of bytes requested except on EOF or error,
+    /// otherwise the rest of the data will be substituted with zeroes. An exception to this is when
+    /// the file has been opened in 'direct_io' mode, in which case the return value of the read
+    /// system call will reflect the return value of this operation. fh will contain the value set
+    /// by the open method, or will be undefined if the open method didn't set any value.
+    ///
+    /// Our approach here is to open a file in the underlying filesystem
+    /// beneath the mountpoint directory.  The ino's string representation is used as
+    /// the file's name.  We then seek to offset, read data, and close the file.
+    ///
+    /// This impl is relatively simple and easy because it is stateless. The file is re-opened
+    /// and closed for each call to write() or read().
+    ///
+    /// TODO: An improvement would be to actually create the on-disk file in create() or open()
+    /// it in open and pass the filehandle around, so that write() and read() do not need to open
+    /// and close.  This should be considerably faster.
     fn read(
         &mut self,
         _req: &Request,
@@ -973,21 +1122,31 @@ impl Filesystem for SafeFS {
         if let Some(inode) = replica.state().tree().find(&ino) {
             let meta = inode.metadata();
 
+            // verify node is a InodeFile
             if !meta.is_inode_file() {
                 reply.error(EINVAL);
                 return;
             }
 
-            let mut file = self.mountpoint.open_file(&ino.to_string()).unwrap();
+            // open file
+            let mut file = match self.mountpoint.open_file(&ino.to_string()) {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("read -- can't open passthrough file {}: {:?}", ino, e);
+                    reply.error(EINVAL);
+                    return;
+                }
+            };
+
+            // seek to position
             if file.seek(SeekFrom::Start(offset as u64)).is_err() {
                 reply.error(EINVAL);
                 return;
             }
 
+            // read data and return it.
             let mut buf = vec![0; size as usize];
             let result = file.read(&mut buf);
-
-            // debug!("read -- read bytes: {:?}, result: {:?}", buf, result);
 
             if let Ok(_bytes_read) = result {
                 reply.data(&buf);
@@ -1006,8 +1165,25 @@ fn main() {
     env_logger::builder()
         .default_format_timestamp_nanos(true)
         .init();
-    let mountpoint = env::args_os().nth(1).unwrap();
-    let mountpoint_fd = Dir::open(Path::new(&mountpoint)).unwrap();
+    let mountpoint = match env::args_os().nth(1) {
+        Some(v) => v,
+        None => {
+            print_usage();
+            return;
+        }
+    };
+
+    // We use Dir::open() to get access to the mountpoint directory
+    // before the mount occurs.  This handle enables us to later create/write/read
+    // "real" files beneath the mountpoint even though other processes will only
+    // see the filesystem view that our SnFs provides.
+    let mountpoint_fd = match Dir::open(Path::new(&mountpoint)) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Unable to open {:?}.  {:?}", mountpoint, e);
+            return;
+        }
+    };
 
     // Notes:
     //  1. todo: these options should come from command line.
@@ -1018,10 +1194,12 @@ fn main() {
         .iter()
         .map(|o| o.as_ref())
         .collect::<Vec<&OsStr>>();
-    fuse::mount(SafeFS::new(mountpoint_fd), &mountpoint, &options).unwrap();
+    if let Err(e) = fuse::mount(SnFs::new(mountpoint_fd), &mountpoint, &options) {
+        eprintln!("Mount failed.  {:?}", e);
+    }
 
-    // Delete all files (each file representing content of 1 inode) under mount point.
-    // this code should be in SafeFS::destroy(), but its not getting called.
+    // Delete all "real" files (each file representing content of 1 inode) under mount point.
+    // this code should be in SnFs::destroy(), but its not getting called.
     // Seems like a fuse bug/issue.
     let mountpoint_fd = Dir::open(Path::new(&mountpoint)).unwrap();
     if let Ok(entries) = mountpoint_fd.list_dir(".") {
@@ -1037,4 +1215,8 @@ fn main() {
             }
         }
     }
+}
+
+fn print_usage() {
+    eprintln!("Usage: sn_fs <mountpoint_path>");
 }
