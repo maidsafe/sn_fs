@@ -47,8 +47,9 @@ For some background, see [this thread](https://forum.safedev.org/t/filetree-crdt
 # Building
 
 1. You need rust 1.46.0 or higher installed.
-2. `$ git clone https://github.com/maidsafe/sn_fs`
-3. `$ cd sn_fs && cargo build`
+2. You need fuse development package installed, eg `libfuse-dev` on Ubuntu.
+3. `$ git clone https://github.com/maidsafe/sn_fs`
+4. `$ cd sn_fs && cargo build`
 
 # Usage
 
