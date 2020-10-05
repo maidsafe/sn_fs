@@ -45,7 +45,7 @@ use fuse::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyOpen, ReplyWrite, Request,
 };
-use libc::{EEXIST, EINVAL, ENOENT, ENOTEMPTY};
+use libc::{mode_t, EEXIST, EINVAL, ENOENT, ENOTEMPTY};
 use std::env;
 use std::ffi::OsStr;
 use std::os::raw::c_int;
@@ -91,7 +91,7 @@ impl SnFs {
     const FILEINODES: u64 = 2; // holds fileinodes
     const TRASH: u64 = 3; // holds deleted inodes
 
-    const INO_FILE_PERM: u32 = 0o600; // permissions for on-disk file-contents.
+    const INO_FILE_PERM: mode_t = 0o600; // permissions for on-disk file-contents.
 
     #[inline]
     fn new(mountpoint: Dir) -> Self {
