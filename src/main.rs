@@ -1199,7 +1199,7 @@ fn main() {
     //  2. allow_other enables other users to read/write.  Required for testing chown.
     //  3. allow_other requires that `user_allow_other` is in /etc/fuse.conf.
     //    let options = ["-o", "ro", "-o", "fsname=safefs"]    // -o ro = mount read only
-    let options = ["-o", "fsname=sn_fs,allow_other"]
+    let options = ["-o", "fsname=sn_fs"]
         .iter()
         .map(|o| o.as_ref())
         .collect::<Vec<&OsStr>>();
