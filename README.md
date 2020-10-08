@@ -17,11 +17,9 @@ metadata such as directory structure, hard and soft links, filenames, and file a
 File content is stored on disk in the underlying filesystem beneath the mountpoint, but 
 these files are not visible to other processes.
 
-At present, the filesystem functions as an in-memory filesystem.  All metadata is lost
-upon unmount.  Also, the on-disk files containing file content are wiped, to leave the
-mountpoint in original (empty) condition as when it was mounted.
+At present, the filesystem functions as a hybrid memory/disk filesystem.  All metadata (directories, symlinks, inodes, filenames) is stored in RAM and the actual file contents are stored on disk.  All data is lost/wiped upon unmount.  RAM is freed and the on-disk files containing file content are wiped, to leave the mountpoint in original (empty) condition as when it was mounted.
 
-Thus far, sn_fs has only been tested on Linux.
+Thus far, sn_fs has mainly been tested on Linux.  It builds and runs on Mac OSX however is reported to exhibit several problems that make it mostly unusable.  It cannot be built on Windows at this time.
 
 For some background, see [this thread](https://forum.safedev.org/t/filetree-crdt-for-safe-network/2833).
 
@@ -34,6 +32,7 @@ For some background, see [this thread](https://forum.safedev.org/t/filetree-crdt
 - [x] Ownership (uid/gid) changes (chown, chgrp)
 - [x] Mode changes (chmod)
 - [x] Timestamps (mtime, ctime, crtime)
+- [ ] xattr extended attributes
 
 # High Level Roadmap
 
@@ -50,6 +49,8 @@ For some background, see [this thread](https://forum.safedev.org/t/filetree-crdt
 2. You need fuse development package installed, eg `libfuse-dev` on Ubuntu.
 3. `$ git clone https://github.com/maidsafe/sn_fs`
 4. `$ cd sn_fs && cargo build`
+
+note: On Mac, you will need to first install [osxfuse](https://github.com/osxfuse/osxfuse/releases).
 
 # Usage
 
@@ -68,12 +69,22 @@ Note that the directory `mountpoint` must be empty.
 Once the filesystem is mounted, you can perform regular file operations within it including
 chown, chmod, mkdir, link, ln, rm, tree, etc.
 
+To view debug output, mount instead with:
+
+`$ RUST_LOG=debug cargo run /path/to/mountpoint`
+
 
 ## Unmount
 
 In another terminal/shell, run:
 
 `$ fusermount -u /path/to/mountpoint`
+
+note: On Mac with osxfuse, you can just use regular `umount` command.
+
+## Bugs / Issues
+
+Please report in the [issue tracker](https://github.com/maidsafe/sn_fs/issues).
 
 ## License
 
