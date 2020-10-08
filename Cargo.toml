@@ -2,7 +2,11 @@
 name = "sn_fs"
 version = "0.1.0"
 authors = ["MaidSafe Developers <dev@maidsafe.net>"]
+description = "A FUSE filesystem implemented atop crdt_tree"
 edition = "2018"
+license = "MIT OR BSD-3-Clause"
+readme = "README.md"
+repository = "https://github.com/maidsafe/sn_fs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

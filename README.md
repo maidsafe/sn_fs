@@ -2,7 +2,7 @@
 
 Proof of concept.  A FUSE filesystem implemented atop [crdt_tree](<https://github.com/dan-da/crdt_tree>).
 
-[MaidSafe website](http://maidsafe.net) | [SAFE Network Forum](https://safenetforum.org/)
+[MaidSafe website](http://maidsafe.net) | [Safe Network Forum](https://safenetforum.org/)
 :-------------------------------------: | :---------------------------------------------:
 
 # About
@@ -88,7 +88,7 @@ Please report in the [issue tracker](https://github.com/maidsafe/sn_fs/issues).
 
 ## License
 
-This SAFE Network software is dual-licensed under the Modified BSD (<LICENSE-BSD> <https://opensource.org/licenses/BSD-3-Clause>) or the MIT license (<LICENSE-MIT> <https://opensource.org/licenses/MIT>) at your option.
+This Safe Network software is dual-licensed under the Modified BSD (<LICENSE-BSD> <https://opensource.org/licenses/BSD-3-Clause>) or the MIT license (<LICENSE-MIT> <https://opensource.org/licenses/MIT>) at your option.
 
 ## Contributing
 
