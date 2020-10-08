@@ -9,7 +9,7 @@ Proof of concept.  A FUSE filesystem implemented atop [crdt_tree](<https://githu
 
 **EXPERIMENTAL: For testing purposes only**
 
-### Important: Any data stored in the filesystem is wiped upon unmount.
+### Important: Any data stored in the filesystem is wiped upon unmount. Do not use with an non-empty directory!
 
 The sn_fs filesystem demonstrates use of the crdt-tree data type to store filesystem
 metadata such as directory structure, hard and soft links, filenames, and file attributes.  
