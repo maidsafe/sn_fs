@@ -17,7 +17,7 @@ env:
 jobs:
   checks:
     name: Clippy & fmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -26,10 +26,6 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt, clippy
-
-      # Generate Cargo.lock, needed for the cache.
-      - name: Generate Cargo.lock
-        run: cargo generate-lockfile
 
       # Cache.
       - name: Cargo cache registry, index and build
@@ -51,7 +47,7 @@ jobs:
 
   coverage:
     name: Code coverage check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
       # Install Rust and required components
@@ -60,10 +56,6 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-
-      # Generate Cargo.lock, needed for the cache.
-      - name: Generate Cargo.lock
-        run: cargo generate-lockfile
 
       # Cache.
       - name: Cargo cache registry, index and build
@@ -94,7 +86,7 @@ jobs:
 
   tests:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
       # Install Rust
@@ -103,10 +95,6 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-
-      # Generate Cargo.lock, needed for the cache.
-      - name: Generate Cargo.lock
-        run: cargo generate-lockfile
 
       # Cache.
       - name: Cargo cache registry, index and build
@@ -125,7 +113,7 @@ jobs:
   # Check for unused dependencies
   cargo-udeps:
     name: Unused dependency check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
       # Install Rust and required components
@@ -144,7 +132,7 @@ jobs:
   # list all duplicate dependencies
   duplicate-dependencies:
     name: List Duplicate Dependencies
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
 
@@ -160,7 +148,7 @@ jobs:
         run: ./scripts/duplicate_dependency_check
 
   cargo-deny:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v2
 

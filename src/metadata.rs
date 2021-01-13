@@ -151,42 +151,27 @@ impl FsMetadata {
 
     #[allow(dead_code)]
     pub fn is_inode_directory(&self) -> bool {
-        match self {
-            Self::InodeDirectory(_) => true,
-            _ => false,
-        }
+        matches!(self, Self::InodeDirectory(_))
     }
 
     #[allow(dead_code)]
     pub fn is_inode_symlink(&self) -> bool {
-        match self {
-            Self::InodeSymlink(_) => true,
-            _ => false,
-        }
+        matches!(self, Self::InodeSymlink(_))
     }
 
     #[allow(dead_code)]
     pub fn is_inode_file(&self) -> bool {
-        match self {
-            Self::InodeFile(_) => true,
-            _ => false,
-        }
+        matches!(self, Self::InodeFile(_))
     }
 
     #[allow(dead_code)]
     pub fn is_ref_file(&self) -> bool {
-        match self {
-            Self::RefFile(_) => true,
-            _ => false,
-        }
+        matches!(self, Self::RefFile(_))
     }
 
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        match self {
-            Self::Empty => true,
-            _ => false,
-        }
+        matches!(self, Self::Empty)
     }
 
     pub fn dirent_kind(&self) -> Option<DirentKind> {
