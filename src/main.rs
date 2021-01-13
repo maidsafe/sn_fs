@@ -957,7 +957,7 @@ impl Filesystem for SnFs {
 
         // generate FileAttr and reply.
         let attr = Self::mk_file_attr(inode_id, FileType::RegularFile, &meta);
-        reply.created(&TTL, &attr, 1, 0 as u64, 0 as u32);
+        reply.created(&TTL, &attr, 1, 0_u64, 0_u32);
     }
 
     /// Flush method. This is called on each close() of the opened file. Since file descriptors
