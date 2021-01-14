@@ -37,6 +37,10 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-cache-${{ hashFiles('**/Cargo.lock') }}
     
+      # Install libfuse
+      - name: Install libfuse
+        run: sudo apt-get update -y && sudo apt-get install -y libfuse-dev
+      
       # Check if the code is formatted correctly.
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -67,6 +71,10 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-cache-${{ hashFiles('**/Cargo.lock') }}
 
+      # Install libfuse
+      - name: Install libfuse
+        run: sudo apt-get update -y && sudo apt-get install -y libfuse-dev
+      
       # Run cargo tarpaulin & push result to coveralls.io
       - name: rust-tarpaulin code coverage check
         uses: actions-rs/tarpaulin@master
@@ -106,6 +114,10 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-cache-${{ hashFiles('**/Cargo.lock') }}
 
+      # Install libfuse
+      - name: Install libfuse
+        run: sudo apt-get update -y && sudo apt-get install -y libfuse-dev
+      
       # Run tests.
       - name: Cargo test
         run: cargo test --release
@@ -123,6 +135,10 @@ jobs:
           toolchain: nightly
           override: true
 
+      # Install libfuse
+      - name: Install libfuse
+        run: sudo apt-get update -y && sudo apt-get install -y libfuse-dev
+      
       # Install and run cargo udeps to find unused cargo dependencies
       - name: cargo-udeps duplicate dependency check
         run: |
