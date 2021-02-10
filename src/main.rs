@@ -33,7 +33,6 @@ extern crate time;
 // https://man7.org/linux/man-pages/man7/inode.7.html
 mod fs_tree_types;
 mod metadata;
-mod tree_replica;
 
 use log::{debug, error};
 use openat::{Dir, SimpleType};
@@ -53,17 +52,17 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use time::Timespec; // unix specific.
 
-use fs_tree_types::{FsOpMove, FsTreeNode};
+use fs_tree_types::{ActorType, FsOpMove, FsTreeNode, FsTreeReplica};
+
 use metadata::{
     DirentKind, FsInodeCommon, FsInodeDirectory, FsInodeFile, FsInodeOs, FsInodePosix,
     FsInodeSymlink, FsMetadata, FsRefFile,
 };
-use tree_replica::TreeReplica;
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 }; // 1 second
 
 struct SnFs {
-    replica: Arc<Mutex<TreeReplica>>,
+    replica: Arc<Mutex<FsTreeReplica>>,
     mountpoint: Dir,
 }
 
@@ -94,9 +93,9 @@ impl SnFs {
     const INO_FILE_PERM: mode_t = 0o600; // permissions for on-disk file-contents.
 
     #[inline]
-    fn new(mountpoint: Dir) -> Self {
+    fn new(actor: ActorType, mountpoint: Dir) -> Self {
         Self {
-            replica: Arc::new(Mutex::new(TreeReplica::new())),
+            replica: Arc::new(Mutex::new(FsTreeReplica::new(actor))),
             mountpoint,
         }
     }
@@ -137,7 +136,7 @@ impl SnFs {
 
     fn child_by_name<'r>(
         &self,
-        replica: &'r TreeReplica,
+        replica: &'r FsTreeReplica,
         parent: u64,
         name: &OsStr,
     ) -> Option<(u64, &'r FsTreeNode)> {
@@ -155,26 +154,13 @@ impl SnFs {
     /// generate move operation that creates a new child node.
     fn new_opmove_new_child(
         &self,
-        replica: &mut TreeReplica,
+        replica: &FsTreeReplica,
         parent: u64,
         metadata: FsMetadata,
     ) -> FsOpMove {
-        let ts = replica.tick();
+        let ts = replica.time().inc();
         let child = InoMerge::combine(*ts.actor_id(), ts.counter());
-        // let child = self.new_ino();
         FsOpMove::new(ts, parent, metadata, child)
-    }
-
-    /// generate move operation that moves an existing node.
-    #[inline]
-    fn new_opmove(
-        &self,
-        replica: &mut TreeReplica,
-        parent: u64,
-        metadata: FsMetadata,
-        child: u64,
-    ) -> FsOpMove {
-        FsOpMove::new(replica.tick(), parent, metadata, child)
     }
 
     #[inline]
@@ -186,7 +172,7 @@ impl SnFs {
     #[inline]
     fn verify_directory<'r>(
         &self,
-        replica: &'r TreeReplica,
+        replica: &'r FsTreeReplica,
         parent: u64,
     ) -> Option<&'r FsTreeNode> {
         match replica.state().tree().find(&parent) {
@@ -243,7 +229,7 @@ impl Filesystem for SnFs {
             },
         });
         // create and apply move operation for root node with parent forest.
-        let op = self.new_opmove(&mut replica, Self::forest(), meta, Self::root());
+        let op = replica.opmove(Self::forest(), meta, Self::root());
         replica.apply_op(op);
 
         Ok(())
@@ -484,7 +470,7 @@ impl Filesystem for SnFs {
             // If metadata changed, we need to generate a Move op.
             if meta != *node.metadata() {
                 let parent_id = *node.parent_id();
-                let op = self.new_opmove(&mut replica, parent_id, meta, ino);
+                let op = replica.opmove(parent_id, meta, ino);
                 replica.apply_op(op);
             }
 
@@ -515,7 +501,7 @@ impl Filesystem for SnFs {
             }
 
             // Generate op to move dir node to trash.
-            let op = self.new_opmove(&mut replica, Self::trash(), FsMetadata::Empty, ino);
+            let op = replica.opmove(Self::trash(), FsMetadata::Empty, ino);
             replica.apply_op(op);
 
             reply.ok();
@@ -566,7 +552,7 @@ impl Filesystem for SnFs {
             });
 
             // create new child node for symlink, generate move op, and apply it.
-            let op = self.new_opmove_new_child(&mut replica, parent, meta.clone());
+            let op = self.new_opmove_new_child(&replica, parent, meta.clone());
             let ino = *op.child_id();
 
             replica.apply_op(op);
@@ -617,9 +603,6 @@ impl Filesystem for SnFs {
         );
         let mut replica = self.replica.lock().unwrap();
 
-        // we may require two ops, so we make a list.
-        let mut ops: Vec<FsOpMove> = Vec::with_capacity(2);
-
         // find child of parent that matches $name
         if let Some((child, node)) = self.child_by_name(&replica, parent, name) {
             let mut newmeta = node.metadata().clone();
@@ -629,12 +612,13 @@ impl Filesystem for SnFs {
             if let Some((old_ino, node)) = self.child_by_name(&replica, newparent, newname) {
                 debug!("rename -- moving old `{:?}` to trash", newname);
                 let meta = node.metadata().clone();
-                ops.push(self.new_opmove(&mut replica, Self::trash(), meta, old_ino));
+                let op = replica.opmove(Self::trash(), meta, old_ino);
+                replica.apply_op(op);
             }
 
             // move child to new location/name
-            ops.push(self.new_opmove(&mut replica, newparent, newmeta, child));
-            replica.apply_ops(&ops);
+            let op = replica.opmove(newparent, newmeta, child);
+            replica.apply_op(op);
 
             reply.ok();
         } else {
@@ -676,7 +660,7 @@ impl Filesystem for SnFs {
         });
 
         // create child node, generate move op, and apply.
-        let op = self.new_opmove_new_child(&mut replica, parent, meta.clone());
+        let op = self.new_opmove_new_child(&replica, parent, meta.clone());
         let ino = *op.child_id();
 
         replica.apply_op(op);
@@ -768,9 +752,6 @@ impl Filesystem for SnFs {
         }
 
         if let Some(node) = replica.state().tree().find(&ino) {
-            // We will have two ops.
-            let mut ops: Vec<FsOpMove> = Vec::with_capacity(2);
-
             let mut meta = node.metadata().clone();
             meta.links_inc();
 
@@ -778,7 +759,8 @@ impl Filesystem for SnFs {
 
             // generate op that increments link count in InodeFile
             let parent_id = *node.parent_id();
-            ops.push(self.new_opmove(&mut replica, parent_id, meta, ino));
+            let op = replica.opmove(parent_id, meta, ino);
+            replica.apply_op(op);
 
             let file_ref_meta = FsRefFile {
                 name: newname.to_os_string(),
@@ -787,11 +769,8 @@ impl Filesystem for SnFs {
 
             // generate op that creates a new RefFile (hard link) to existing InodeFile
             let meta_ref = FsMetadata::RefFile(file_ref_meta);
-            let op_ref = self.new_opmove_new_child(&mut replica, newparent, meta_ref);
-            ops.push(op_ref);
-
-            // apply both ops
-            replica.apply_ops(&ops);
+            let op = self.new_opmove_new_child(&replica, newparent, meta_ref);
+            replica.apply_op(op);
 
             reply.entry(&TTL, &attr, 0);
         } else {
@@ -806,27 +785,16 @@ impl Filesystem for SnFs {
 
         // lookup child by name
         if let Some((child, node)) = self.child_by_name(&replica, parent, name) {
-            // we may need 0, 1 or 2 ops.
-            let mut ops: Vec<FsOpMove> = Vec::with_capacity(2);
-
             match node.metadata() {
                 FsMetadata::InodeSymlink(_) => {
-                    ops.push(self.new_opmove(
-                        &mut replica,
-                        Self::trash(),
-                        FsMetadata::Empty,
-                        child,
-                    ));
+                    let op = replica.opmove(Self::trash(), FsMetadata::Empty, child);
+                    replica.apply_op(op);
                 }
                 FsMetadata::RefFile(m) => {
                     // move the inode reference to trash
                     let inode_id = m.inode_id;
-                    ops.push(self.new_opmove(
-                        &mut replica,
-                        Self::trash(),
-                        FsMetadata::Empty,
-                        child,
-                    ));
+                    let op = replica.opmove(Self::trash(), FsMetadata::Empty, child);
+                    replica.apply_op(op);
 
                     // lookup the inode. (dereference RefFile hard link)
                     if let Some(inode) = replica.state().tree().find(&inode_id) {
@@ -838,13 +806,15 @@ impl Filesystem for SnFs {
                             // reference(s) still exist, so we need to update the inode's link count.
                             debug!("unlink -- links: {}, preserving inode {}", cnt, inode_id);
                             let parent_id = *inode.parent_id();
-                            ops.push(self.new_opmove(&mut replica, parent_id, meta, inode_id));
+                            let op = replica.opmove(parent_id, meta, inode_id);
+                            replica.apply_op(op);
                         } else {
                             // when link count has dropped to zero, move the inode to trash
                             // we must preserve the metadata because some process(es) may still
                             // have the file open for reading/writing.
                             debug!("unlink -- links: {}, removing inode {}.", cnt, inode_id);
-                            ops.push(self.new_opmove(&mut replica, Self::trash(), meta, inode_id));
+                            let op = replica.opmove(Self::trash(), meta, inode_id);
+                            replica.apply_op(op);
                         }
                     }
                 }
@@ -854,8 +824,6 @@ impl Filesystem for SnFs {
                 }
             }
 
-            // apply ops.
-            replica.apply_ops(&ops);
             reply.ok();
         } else {
             reply.error(ENOENT);
@@ -899,9 +867,6 @@ impl Filesystem for SnFs {
             return;
         }
 
-        // we will use two ops.
-        let mut ops: Vec<FsOpMove> = Vec::with_capacity(2);
-
         // create tree node under /inodes/<x>
         let file_inode_meta = FsInodeFile {
             common: FsInodeCommon {
@@ -920,7 +885,7 @@ impl Filesystem for SnFs {
         };
         let meta = FsMetadata::InodeFile(file_inode_meta);
 
-        let op = self.new_opmove_new_child(&mut replica, Self::fileinodes(), meta.clone());
+        let op = self.new_opmove_new_child(&replica, Self::fileinodes(), meta.clone());
         let inode_id = *op.child_id();
 
         // create file on disk.
@@ -933,7 +898,7 @@ impl Filesystem for SnFs {
             return;
         };
 
-        ops.push(op);
+        replica.apply_op(op);
 
         // create tree entry under /root/../parent_id
         let file_ref_meta = FsRefFile {
@@ -943,12 +908,9 @@ impl Filesystem for SnFs {
 
         // Here we create the RefFile hard link to the InodeFile created above.
         let meta_ref = FsMetadata::RefFile(file_ref_meta);
-        let op_ref = self.new_opmove_new_child(&mut replica, parent, meta_ref);
+        let op_ref = self.new_opmove_new_child(&replica, parent, meta_ref);
         let ref_id = *op_ref.child_id();
-        ops.push(op_ref);
-
-        // apply operations.
-        replica.apply_ops(&ops);
+        replica.apply_op(op_ref);
 
         debug!(
             "create -- ref_id={}, inode_id={}, name={:?}",
@@ -1076,7 +1038,7 @@ impl Filesystem for SnFs {
 
             // Generate op for updating the tree_node metadata
             let parent_id = *inode.parent_id();
-            let op = self.new_opmove(&mut replica, parent_id, meta, ino);
+            let op = replica.opmove(parent_id, meta, ino);
 
             replica.apply_op(op);
             replica.truncate_log();
@@ -1171,9 +1133,7 @@ impl Filesystem for SnFs {
 }
 
 fn main() {
-    env_logger::builder()
-        .default_format_timestamp_nanos(true)
-        .init();
+    env_logger::builder().format_timestamp_nanos().init();
     let mountpoint = match env::args_os().nth(1) {
         Some(v) => v,
         None => {
@@ -1194,6 +1154,8 @@ fn main() {
         }
     };
 
+    let actor = rand::random::<ActorType>();
+
     // Notes:
     //  1. todo: these options should come from command line.
     //  2. allow_other enables other users to read/write.  Required for testing chown.
@@ -1203,8 +1165,11 @@ fn main() {
         .iter()
         .map(|o| o.as_ref())
         .collect::<Vec<&OsStr>>();
-    if let Err(e) = fuse::mount(SnFs::new(mountpoint_fd), &mountpoint, &options) {
+
+    // mount the filesystem.
+    if let Err(e) = fuse::mount(SnFs::new(actor, mountpoint_fd), &mountpoint, &options) {
         eprintln!("Mount failed.  {:?}", e);
+        return;
     }
 
     // Delete all "real" files (each file representing content of 1 inode) under mount point.
